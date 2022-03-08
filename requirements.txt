@@ -1,7 +1,8 @@
 asyncssh==2.8.1
 attrs==21.2.0
-click==7.1.2
+click==8.0.4
 colorama==0.4.4
+inflector==3.0.1
 iniconfig==1.1.1
 packaging==21.3
 pluggy==0.13.1
@@ -11,4 +12,4 @@ pytest==6.2.4
 requests==2.27.1
 shellingham==1.4.0
 toml==0.10.2
-typer==0.3.2
+typer==0.4.0

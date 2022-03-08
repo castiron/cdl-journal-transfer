@@ -1,24 +1,31 @@
 """
-This module provides the CDL Journal Transfer CLI app.
+This module provides a CLI interface for managing and performing journal transfers.
+
+Commands:
+    init: Initialize config file and data directory
+    configure: Update configuration
+    get-config: Output the current configuration
+    define-server: Create or update a new server definition
+    delete-server: Delete an existing server definition
+    get-server: Output a server definition (or all server definitions)
+    transfer: Perform a data transfer
 
 Color standards:
-- White foreground: standard
-- Yellow foreground: attention / prompt
-- Blue foreground: syntax highlighting
-- Magenta foreground: verbose info
-- Green foreground: success
-- Red foreground: warning / non-fatal error
-
-- Blue background: header
-- Green background: great success
-- Red background: fatal error
+    White foreground: standard
+    Yellow foreground: attention / prompt
+    Blue foreground: syntax highlighting
+    Magenta foreground: verbose info
+    Green foreground: success
+    Red foreground: warning / non-fatal error
+    Blue background: header
+    Green background: great success
+    Red background: fatal error
 """
 # cdl_journal_transfer/cli.py
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Union
 from enum import Enum
-from typing import List
 
 import typer, asyncio
 
@@ -98,15 +105,29 @@ def opt_keep_max(default: int = None):
     )
 
 
+# Typer utility methods
+
 def verbose() -> bool:
+    """Is the CLI in verbose mode?"""
     return state["verbose"] or config.verbose()
 
 
 def is_test() -> bool:
+    """Is the CLI in test mode?"""
     return state["test"]
 
 
 def color(type):
+    """
+    Provides Typer kwargs for color themes.
+
+    Parameters:
+        type: str
+            The type of message being displayed. This determines the color palette.
+
+    Returns:
+        dict: Typer kwargs to display proper colors.
+    """
     if type == "attention":
         return { "fg":  typer.colors.YELLOW }
     elif type == "info":
@@ -127,21 +148,67 @@ def color(type):
         return { "fg": typer.colors.WHITE }
 
 
-def write(text, theme=None, line_break=False, **options):
-    if line_break in (True, "before") : write_line_break()
+def write(text: str, theme: str = None, line_break: Union[str, bool] = False, **options) -> None:
+    """
+    Prints to the terminal with standardized formatting.
+
+    Parameters:
+        text: str
+            Text to display.
+        theme: str
+            Theme name to determine color palette.
+        line_break: Union[str, bool]
+            Accepted values: 'before', 'after', 'both', True.
+            'before': Adds a line break before the printed text.
+            'after': Adds a line break after the printed text.
+            'both', True: Adds line breaks both before and after the printed text.
+        options: dict
+            Arbitrary options to pass to typer.secho as kwargs.
+    """
+    if line_break in (True, "before", "both") : write_line_break()
     typer.secho(f"    {text}", **color(theme), **options)
-    if line_break in (True, "after") : write_line_break()
+    if line_break in (True, "after", "both") : write_line_break()
 
 
-def verbose_write(text, line_break=False, theme="info", **options):
+def verbose_write(text, line_break=False, theme="info", **options) -> None:
+    """
+    Prints to the terminal if CLI is in verbose mode with standardized formatting.
+
+    Parameters:
+        text: str
+            Text to display
+        line_break: str | bool
+            Accepted values: 'before', 'after', 'both', True.
+            'before': Adds a line break before the printed text.
+            'after': Adds a line break after the printed text.
+            'both', True: Adds line breaks both before and after the printed text.
+        theme : str
+            Theme name to determine color palette. Default for verbose content is 'info'.
+        options: dict
+            Arbitrary options to pass to typer.secho as kwargs.
+    """
     if verbose() : write(text, theme, line_break, **options)
 
 
-def write_line_break():
+def write_line_break() -> None:
+    """Prints a line break to the terminal."""
     write("")
 
 
+def confirm(text, theme="attention", abort=True, **options):
+    """Prints a confirmation prompt to the terminal with standardized formatting."""
+    message = typer.style(f"    {text}", **color(theme))
+    typer.confirm(message, abort=abort, **options)
+
+
 def abort_if_errors(errors):
+    """
+    Prints a message and raises an Exit command if errors are provided.
+
+    Parameters:
+        errors: list
+            A list of any error messages to be displayed. If the list is empty, noop.
+    """
     error_count = len(errors)
     if error_count > 0:
         write(f"{error_count} {'errors have' if error_count > 1 else 'error has'} occurred:", "error")
@@ -373,7 +440,7 @@ def get_config() -> None:
 
 @app.async_command()
 async def transfer(
-    journals: List[Path] = typer.Argument(
+    journals: List[str] = typer.Argument(
         None,
         help="Any number of journal key names (also known as 'paths' or 'codes') that are to be transferred"
     ),
@@ -390,7 +457,12 @@ async def transfer(
         help="If true, only take currently-stored data and transfer to target server. Do not fetch new data."
     ),
     data_directory: Optional[str] = opt_data_directory(default = config.get("data_directory")),
-    keep: Optional[bool] = opt_keep(default = config.get("keep"))
+    keep: Optional[bool] = opt_keep(default = config.get("keep")),
+    debug: Optional[bool] = typer.Option(
+        False,
+        "--debug",
+        help="Enable debug output"
+    )
 ) -> None:
     """
     Initiates a transfer of data from a source server to a target server.
@@ -413,36 +485,39 @@ async def transfer(
 
     abort_if_errors(errors)
 
-    if journals is None or not len(journals):
-        text = typer.style(f"You are about to import ALL journals from {source}. Are you sure?", **color("attention"))
-        typer.confirm(text, abort=True)
+    message = f"You are about to transfer {len(journals) or 'ALL'} journal(s) from {f'server `{source}`' if source else 'local storage'} to {f'server `{target}`' if target else 'local storage'}. Are you sure?"
+    confirm(message)
 
-    write(f"You are about to transfer {len(journals)} from server {source} to {target}.")
+    database.prepare(keep)
 
-    with typer.progressbar(length=100) as progress:
-        progress_reporter = CliProgressReporter(progress)
+    transfer_methods = []
+    if not put_only:
+        transfer_methods = transfer_methods + ["fetch_data"]
+    if not fetch_only:
+        transfer_methods = transfer_methods + ["put_data"]
 
-        database.prepare(keep)
-        handler = TransferHandler(data_directory, source=source_def, target=target_def, progress_reporter=progress_reporter)
-        method_name = "fetch_data" if fetch_only else ("put" if put_only else "transfer")
+    progress_reporter = CliProgressReporter(typer, init_message="Initializing...", verbose = verbose(), debug = debug)
+    handler = TransferHandler(data_directory, source=source_def, target=target_def, progress_reporter=progress_reporter)
+
+    for method_name in transfer_methods:
         method = getattr(handler, method_name)
         method(journals, progress_reporter)
 
 
 # Callbacks
-def _version_callback(value: bool) -> None:
+def __version_callback(value: bool) -> None:
     if value:
         output = f"{__app_name__} version {__version__}" if verbose() else f"{__app_name__} v{__version__}"
         typer.echo(output)
         raise typer.Exit()
 
 
-def _verbose_callback(value: bool) -> None:
+def __verbose_callback(value: bool) -> None:
     if value:
         state["verbose"] = True
 
 
-def _test_callback(value: bool) -> None:
+def __test_callback(value: bool) -> None:
     """
     If test is true, we'll create all files in a tmp directory, then delete them after
     """
@@ -460,20 +535,20 @@ def main(
         "-v",
         help="Enable verbose output",
         show_default=False,
-        callback=_verbose_callback,
+        callback=__verbose_callback,
         is_eager=True
     ),
     test: Optional[bool] = typer.Option(
         False,
         "--test",
-        callback=_test_callback,
+        callback=__test_callback,
         hidden=True
     ),
     version: Optional[bool] = typer.Option(
         None,
         "--version",
         help="Show the application's version and exit",
-        callback=_version_callback,
+        callback=__version_callback,
         is_eager=True
     )
 ) -> None:

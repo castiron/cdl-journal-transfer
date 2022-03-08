@@ -1,4 +1,4 @@
-"""This module provides default configuration for CDL Journal Transfer"""
+"""This module provides access and management of a configuration file."""
 # cdl_journal_transfer/config.py
 
 from configparser import ConfigParser, NoOptionError, NoSectionError

@@ -1,4 +1,4 @@
-"""This module provides access to the data directory"""
+"""This module provides access to and management of the data directory."""
 # cdl_journal_transfer/database.py
 
 import configparser, shutil, os
@@ -18,7 +18,7 @@ def create() -> int:
     db_path = Path(get_database_path())
 
     try:
-        cli.write_verbose(f'Creating data directory at {str(db_path)}')
+        cli.verbose_write(f'Creating data directory at {str(db_path)}')
 
         db_path.mkdir(exist_ok=True)
         (db_path / "data").mkdir(exist_ok=True)
