@@ -79,7 +79,7 @@ class TransferHandler:
         self.progress_length = 0
         self.progress_reporter.debug("Initializing...")
         self.__build_indexes(journal_paths)
-        # self.__fetch_data()
+        self.__fetch_all_journals()
 
 
     def put_data(self) -> None:
@@ -160,11 +160,11 @@ class TransferHandler:
         self.progress_reporter.debug("Fetching journal index from source.")
 
         subresource_count = len(self.STRUCTURE["journals"])
-        journal_index_file, journal_index = self.__build_index_file(self.data_directory, "journals", paths = ",".join(journal_paths))
+        journal_index_file, self.journal_index = self.__build_index_file(self.data_directory, "journals", paths = ",".join(journal_paths))
 
-        self.progress_reporter.major("Fetching indexes...", len(journal_index))
+        self.progress_reporter.major("Fetching indexes...", len(self.journal_index))
 
-        for index, journal in enumerate(journal_index):
+        for index, journal in enumerate(self.journal_index):
             self.progress_reporter.minor(index, f"Fetching indexes for journal: {journal['title']}", subresource_count)
 
             journal_uuid = journal["uuid"]
@@ -227,57 +227,78 @@ class TransferHandler:
         return object_dict["source_record_key"].split(":")[-1]
 
 
-    def __fetch_journal(self, journal: dict):
+    def __fetch_all_journals(self):
+        journal_index_length = len(self.journal_index)
+        self.progress_reporter.major(f"Fetching {journal_index_length} journals...", journal_index_length)
+
+        for index, journal in enumerate(self.journal_index):
+            self.current_journal_path = self.data_directory / "journals" / journal["uuid"]
+            self.__fetch_journal(journal, index)
+
+
+    def __fetch_journal(self, journal: dict, journal_number: int) -> None:
         """
-        Fetches data for a provided journal stub
+        Fetches data for a provided journal index entry
         """
-        self.current_journal_path = self.data_directory / "journals" / journal["uuid"]
-        dir = self.current_journal_path.mkdir()
+        self.progress_reporter.debug(f"Calculating progress for journal {journal['title']}")
+
+        subresources = {}
+        for subresource in self.STRUCTURE["journals"]:
+            with open(self.current_journal_path / subresource / "index.json") as file:
+                subresources[subresource] = json.loads(file.read())
+
+        total_length = sum(map(lambda index: len(index), subresources.values())) + 1 # +1 for the journal itself
+
+        self.progress_reporter.minor(journal_number, f"Fetching data for journal: {journal['title']}...", total_length)
+        progress = 1
+        self.progress_reporter.detail(progress, f"Fetching journal metadata")
+
         file = self.current_journal_path / "journal.json"
         file.touch()
 
-        self.current_journal_source_id = journal["source_record_key"].split(":")[-1]
+        self.current_journal_source_id = self.__source_pk(journal)
         self.__do_fetch(f"journals/{self.current_journal_source_id}", file)
 
-        self.__fetch_roles_and_users(journal)
+        for index, subresource_name in enumerate(self.STRUCTURE["journals"]):
+            self.progress_reporter.detail(progress, f"{journal['title']} - Fetching {subresource_name}")
+            potential_method_name = f"_TransferHandler__fetch_{subresource_name}"
+            if hasattr(self, potential_method_name):
+                method = getattr(self, potential_method_name)
+                for subresource in subresources[subresource_name]:
+                    method(journal, subresource)
+                    progress += 1
+            else:
+                for subresource in subresources[subresource_name]:
+                    self.__fetch_subresource(subresource_name, journal, subresource)
+                    progress += 1
 
-        for subresource in ["issues", "sections"]:
-            self.__fetch_subresource(subresource, journal)
-
-
-    def __fetch_subresource(self, name, journal):
-        path = self.current_journal_path / name
-        dir = path.mkdir()
-        file = path / "index.json"
-        file.touch()
-
-        self.__do_fetch(f"journals/{self.current_journal_source_id}/{name}", file)
-
-        with open(path / "index.json") as f:
-            subresource_index = json.loads(f.read())
-
-        for index, subresource in enumerate(subresource_index):
-            sub_path = path / subresource["uuid"]
-            sub_dir = sub_path.mkdir()
-            sub_file = sub_path / f"{self.inflector.singularize(name)}.json"
-            sub_file.touch()
-            subresource_id = subresource["source_record_key"].split(":")[-1]
-            self.__do_fetch(f"journals/{self.current_journal_source_id}/{name}/{subresource_id}", sub_file)
+        self.progress_reporter.detail(progress, "Done!")
 
 
-    def __fetch_roles_and_users(self, journal):
-        roles_file = self.current_journal_path / "roles.json"
-        roles_file.touch()
+    def __fetch_subresource(self, name, journal, subresource) -> None:
+        subresource_dir = self.current_journal_path / name / subresource["uuid"]
+        subresource_dir.mkdir()
+        subresource_file = subresource_dir / f"{self.inflector.singularize(name)}.json"
+        subresource_file.touch()
 
-        self.__do_fetch(f"journals/{self.current_journal_source_id}/roles", roles_file)
+        subresource_source_key = self.__source_pk(subresource)
 
+        self.__do_fetch(f"journals/{self.current_journal_source_id}/{name}/{subresource_source_key}", subresource_file)
+
+
+    def __fetch_roles(self, journal, role_def) -> None:
         users_path = self.data_directory / "users"
         users_dir = users_path.mkdir(exist_ok=True)
 
-        with open(roles_file) as f:
-            roles = json.loads(f.read())
+        user_dir = users_path / role_def["uuid"]
+        if user_dir.exists() : return
 
-        # for user in roles:
+        user_dir.mkdir()
+        user_file = user_dir / "user.json"
+        user_file.touch()
+
+        user_pk = self.__source_pk(role_def)
+        self.__do_fetch(f"users/{user_pk}", user_file)
 
 
 

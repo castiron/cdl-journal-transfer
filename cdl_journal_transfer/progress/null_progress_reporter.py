@@ -2,6 +2,9 @@ from cdl_journal_transfer.progress.abstract_progress_reporter import AbstractPro
 
 class NullProgressReporter(AbstractProgressReporter):
 
+    def clean_up(self) -> None:
+        pass
+
     def _update_interface(self) -> None:
         pass
 

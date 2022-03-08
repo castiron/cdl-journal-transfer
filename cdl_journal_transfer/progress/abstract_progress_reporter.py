@@ -204,6 +204,13 @@ class AbstractProgressReporter(ABC):
         self.message = message
 
 
+    @abstractmethod
+    def clean_up(self) -> None:
+        """
+        Cleans up any progress bars for a clean exit.
+        """
+        pass
+
     ## Protected methods
 
     @abstractmethod

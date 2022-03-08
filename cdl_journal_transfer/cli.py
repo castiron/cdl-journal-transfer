@@ -440,8 +440,10 @@ def get_config() -> None:
 
 @app.async_command()
 async def transfer(
-    journals: List[str] = typer.Argument(
-        None,
+    journals: List[str] = typer.Option(
+        [],
+        "--journals",
+        "-j",
         help="Any number of journal key names (also known as 'paths' or 'codes') that are to be transferred"
     ),
     source: Optional[str] = opt_source(default = config.get("default_source")),
@@ -502,6 +504,8 @@ async def transfer(
     for method_name in transfer_methods:
         method = getattr(handler, method_name)
         method(journals, progress_reporter)
+
+    progress_reporter.clean_up()
 
 
 # Callbacks

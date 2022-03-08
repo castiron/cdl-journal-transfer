@@ -20,6 +20,9 @@ class CliProgressReporter(AbstractProgressReporter):
         super().set_progress(new_total_progress)
 
 
+    def clean_up(self) -> None:
+        self._close_progress_bar()
+
     ## Protected
 
     def _update_interface(self) -> None:
@@ -71,7 +74,7 @@ class CliProgressReporter(AbstractProgressReporter):
             theme = "normal"
         elif update_type is ProgressUpdateType.DEBUG:
             theme = "info"
-            
+
         if message : self._print_message(f"{self._now()} -- {message}", theme)
 
 
