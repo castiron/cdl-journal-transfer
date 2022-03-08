@@ -6,20 +6,19 @@ from pathlib import Path
 
 import typer
 
-from cdl_journal_transfer import WRITE_ERROR, SUCCESS, __app_name__, config, cli
+from cdl_journal_transfer import WRITE_ERROR, SUCCESS, __app_name__, config
 
 
 def get_database_path() -> Path:
     """Return the current path to the data directory"""
     return config.get("data_directory")
 
+
 def create() -> int:
     """Create the data directory"""
     db_path = Path(get_database_path())
 
     try:
-        cli.verbose_write(f'Creating data directory at {str(db_path)}')
-
         db_path.mkdir(exist_ok=True)
         (db_path / "data").mkdir(exist_ok=True)
 

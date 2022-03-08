@@ -13,15 +13,11 @@ from cdl_journal_transfer import (
     FILE_ERROR,
     JSON_ERROR,
     SUCCESS,
-    __app_name__,
-    cli
+    __app_name__
 )
 
 CONFIG_DIR_PATH = Path(typer.get_app_dir(__app_name__))
 CONFIG_FILE_PATH = CONFIG_DIR_PATH / "config.ini"
-
-TEST_CONFIG_DIR_PATH = Path("./tests/tmp")
-TEST_CONFIG_FILE_PATH = TEST_CONFIG_DIR_PATH / "config.ini"
 
 CONFIG_SECTION = "config"
 
@@ -35,8 +31,6 @@ def get(key: str) -> str:
 
 def create(data_dir: Path) -> int:
     """Create the config file"""
-    cli.verbose_write('Creating config file...')
-
     try:
         _config_path().touch(exist_ok=True)
         cfg = get_config()
@@ -56,7 +50,6 @@ def apply_options(**options) -> int:
         transformed_value = _transform_config_value(value)
         if transformed_value is None:
             continue
-        cli.verbose_write(f'Applying config value "{key}" as "{transformed_value}"')
         cfg[CONFIG_SECTION][key] = transformed_value
 
     return _write_config(cfg)
@@ -128,7 +121,7 @@ def new_config() -> ConfigParser:
 
 
 def _config_path() -> Path:
-    return TEST_CONFIG_FILE_PATH if cli.is_test() else CONFIG_FILE_PATH
+    return CONFIG_FILE_PATH
 
 
 def _transform_config_value(value: str) -> str:

@@ -10,6 +10,8 @@ from typer.testing import CliRunner
 
 from cdl_journal_transfer import __app_name__, __version__, cli, config, database
 
+import shared
+
 runner = CliRunner()
 
 TMP_PATH = Path("./tests/tmp")
@@ -119,7 +121,7 @@ def test_get_servers():
     server_name = "test_server"
     create_fake_server(server_name)
 
-    result = run("get-servers")
+    result = run("get-server")
     assert result.exit_code == 0
     assert f"Name: {server_name}" in result.stdout
 

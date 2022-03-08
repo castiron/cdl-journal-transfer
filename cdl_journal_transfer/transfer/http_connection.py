@@ -24,7 +24,7 @@ class HTTPConnection(AbstractConnection):
         url = f"{self.host.strip('/')}/{path.strip('/')}"
         request_opts = {**self.__credentials(), **{"params": args}}
         response = requests.get(url, **request_opts)
-        return json.loads(response.text or "[]")
+        return response.json()
 
 
     def put(self, path: str, data) -> bool:

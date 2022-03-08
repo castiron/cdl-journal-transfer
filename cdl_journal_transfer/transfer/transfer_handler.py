@@ -11,6 +11,7 @@ from cdl_journal_transfer import __version__
 from cdl_journal_transfer.transfer.http_connection import HTTPConnection
 from cdl_journal_transfer.transfer.ssh_connection import SSHConnection
 from cdl_journal_transfer.progress.abstract_progress_reporter import AbstractProgressReporter
+from cdl_journal_transfer.progress.null_progress_reporter import NullProgressReporter
 from cdl_journal_transfer.progress.progress_update_type import ProgressUpdateType
 
 class TransferHandler:
@@ -53,7 +54,7 @@ class TransferHandler:
         open(file, "w").write(json.dumps(content))
 
 
-    def fetch_data(self, journal_paths: list, progress_reporter: AbstractProgressReporter) -> None:
+    def fetch_data(self, journal_paths: list, progress_reporter: AbstractProgressReporter = NullProgressReporter(None)) -> None:
         """
         Fetches data from the source connection and writes it all to files in the data directory.
 

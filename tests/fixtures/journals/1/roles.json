@@ -1,0 +1,9 @@
+[
+  {
+    "source_record_key": "User:1",
+    "roles": [
+      "user.role.manager",
+      "user.role.editor"
+    ]
+  }
+]

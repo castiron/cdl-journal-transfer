@@ -1,0 +1,13 @@
+#!/bin/bash
+
+# Find and navigate to this script's current directory, so it can be invoked from anywhere
+self_path=$(realpath $0)
+dir_path=$(dirname $self_path)
+cd "$dir_path"
+cd ../
+
+# Activate virtual env
+source .venv/bin/activate
+
+# Exexcute CLI command
+pytest $1
