@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Optional, List, Union
 from enum import Enum
 
-import typer, asyncio
+import typer, asyncio, os
 
 from cdl_journal_transfer import __app_name__, __version__, ERRORS, config, database
 from cdl_journal_transfer.transfer.transfer_handler import TransferHandler
@@ -114,7 +114,7 @@ def verbose() -> bool:
 
 def is_test() -> bool:
     """Is the CLI in test mode?"""
-    return state["test"]
+    return state["test"] or os.getenv("PYTHON_ENV") == "test"
 
 
 def color(type):
@@ -221,7 +221,12 @@ def abort_if_errors(errors):
 
 @app.command()
 def init(
-    data_directory: Optional[str] = opt_data_directory()
+    data_directory: Optional[str] = typer.Option(
+        None,
+        "--data-directory",
+        "-d",
+        help="Path to data directory location"
+    )
 ) -> None:
     """
     Initialize the application for use. Must be called first.
@@ -231,10 +236,10 @@ def init(
     any other configuration.
     """
     write("Initializing CDL Journal Portability Command Line App...", "header", "after")
-    data_dir = config.TEST_CONFIG_DIR_PATH if is_test() else Path(data_directory)
-    data_dir.mkdir(exist_ok=True)
+    data_directory = Path(data_directory) if data_directory else config.CONFIG_DIR_PATH
+    data_directory.mkdir(exist_ok=True)
 
-    config_init_error = config.create(data_dir)
+    config_init_error = config.create(data_directory)
     if config_init_error:
         write(f'ERROR: Creating config file failed with "{ERRORS[config_init_error]}"', "error")
         raise typer.Exit(1)
@@ -307,7 +312,7 @@ def define_server(
         help="The server's URL or hostname that can be used to access it from this machine"
     ),
     type: Optional[ConnectionType] = typer.Option(
-        ConnectionType.http,
+        None,
         "--type",
         "-t",
         help="Method that should be used to connect to the server"
@@ -336,6 +341,8 @@ def define_server(
     If NAME already exists in the config (case sensitive), this command
     will update that server rather than creating a new one.
     """
+    args = {k: v for k, v in locals().items() if v is not None}
+    if type : args["type"] = type.value
     existing = config.get_server(name)
 
     if existing:
@@ -343,8 +350,7 @@ def define_server(
     else:
         verbose_write(f"Creating new server '{name}'...", "after")
 
-    type = type.value
-    result = config.define_server(**locals())
+    result = config.define_server(**args)
     if ERRORS.get(result, False):
         write(f'ERROR: An error occurred: {ERRORS[result]}', "error")
     else:
@@ -453,9 +459,9 @@ async def transfer(
         "--fetch-only",
         help="If true, only fetch data and do not transfer to target server."
     ),
-    put_only: Optional[bool] = typer.Option(
+    push_only: Optional[bool] = typer.Option(
         False,
-        "--put-only",
+        "--push-only",
         help="If true, only take currently-stored data and transfer to target server. Do not fetch new data."
     ),
     data_directory: Optional[str] = opt_data_directory(default = config.get("data_directory")),
@@ -464,6 +470,12 @@ async def transfer(
         False,
         "--debug",
         help="Enable debug output"
+    ),
+    force: Optional[bool] = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Run without prompts"
     )
 ) -> None:
     """
@@ -477,33 +489,32 @@ async def transfer(
     source_def = config.get_server(source)
     target_def = config.get_server(target)
 
-    if source_def == None and not put_only:
+    if source_def == None and not push_only:
         errors.append(f'Source server {f"{source} is not defined" if source is not None else "is required"}')
     if target_def == None and not fetch_only:
         errors.append(f'Target server {f"{target} is not defined" if target is not None else "is required"}')
 
-    if fetch_only and put_only:
-        errors.append(f"--fetch-only and --put-only are both set. If you'd like to do a full transfer, leave both flags unset")
+    if fetch_only and push_only:
+        errors.append("--fetch-only and --push-only are both set. If you'd like to do a full transfer, leave both flags unset")
 
     abort_if_errors(errors)
 
     message = f"You are about to transfer {len(journals) or 'ALL'} journal(s) from {f'server `{source}`' if source else 'local storage'} to {f'server `{target}`' if target else 'local storage'}. Are you sure?"
-    confirm(message)
-
-    database.prepare(keep)
+    if not force : confirm(message)
 
     transfer_methods = []
-    if not put_only:
-        transfer_methods = transfer_methods + ["fetch_data"]
+    if not push_only:
+        database.prepare(keep)
+        transfer_methods = transfer_methods + ["fetch_indexes", "fetch_data"]
     if not fetch_only:
-        transfer_methods = transfer_methods + ["put_data"]
+        transfer_methods = transfer_methods + ["push_data"]
 
     progress_reporter = CliProgressReporter(typer, init_message="Initializing...", verbose = verbose(), debug = debug)
     handler = TransferHandler(data_directory, source=source_def, target=target_def, progress_reporter=progress_reporter)
 
     for method_name in transfer_methods:
         method = getattr(handler, method_name)
-        method(journals, progress_reporter)
+        method(journals)
 
     progress_reporter.clean_up()
 

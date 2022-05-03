@@ -1,7 +1,7 @@
 """Interface for handling journal transfers from source to target servers"""
 # cdl_journal_transfer/transfer/handler.py
 
-import asyncio, json, uuid, inspect, inflector
+import json, uuid, inflector, re
 
 from pathlib import Path
 from datetime import datetime
@@ -10,51 +10,171 @@ from cdl_journal_transfer import __version__
 
 from cdl_journal_transfer.transfer.http_connection import HTTPConnection
 from cdl_journal_transfer.transfer.ssh_connection import SSHConnection
+
 from cdl_journal_transfer.progress.abstract_progress_reporter import AbstractProgressReporter
 from cdl_journal_transfer.progress.null_progress_reporter import NullProgressReporter
 from cdl_journal_transfer.progress.progress_update_type import ProgressUpdateType
 
 class TransferHandler:
 
+    STAGE_INDEXING = "indexing"
+    STAGE_FETCHING = "fetching"
+    STAGE_PUSHING = "pushing"
+    STAGES = [STAGE_INDEXING, STAGE_FETCHING, STAGE_PUSHING]
+
+    DEFAULT_INDEX_HANDLER = "_fetch_index"
+    DEFAULT_FETCH_HANDLER = "_fetch_detail"
+    DEFAULT_PUSH_HANDLER = "_push_file"
+
     STRUCTURE = {
-        "journals": [
-            "roles",
-            "issues",
-            "sections"#,
-            #"articles": {}
-        ]
+        "users": {
+            "index": False,
+            "fetch": False,
+            "push": False
+        },
+        "journals": {
+            "name_key": "title",
+            "index": {
+                "handler": "_index_journals"
+            },
+            "children": {
+                "roles": {
+                    "fetch": {
+                        "handler": "_fetch_roles"
+                    },
+                    "push": {
+                        "handler": "_push_roles"
+                    }
+                },
+                "issues": {},
+                "sections": {},
+                "articles": {
+                    "name_key": "title",
+                    "foreign_keys": ["issues", "sections"],
+                    "children": {
+                        "authors": {
+                            "fetch": {
+                                "handler": "_extract_from_index"
+                            }
+                        },
+                        "files": {
+                            "fetch": {
+                                "handler": "_fetch_files"
+                            },
+                            "push": {
+                                "handler": "_push_files"
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    def __init__(self, data_directory: str, source: dict = None, target: dict = None, **options):
+    def __init__(
+        self, data_directory: str, source: dict = None, target: dict = None,
+        progress_reporter: AbstractProgressReporter = NullProgressReporter(None),
+        **options
+    ):
+        """
+        Parameters:
+            data_directory: str
+                Directory where fetched data is stored.
+            source: dict
+                Connection information for the data source server.
+            target: dict
+                Connection information for the target server.
+            progress: AbstractProgressReporter
+                A progress reporter instance that can be used to update the UI.
+        """
         self.data_directory = Path(data_directory) / "current"
         self.source = source
         self.target = target
+        self.progress = progress_reporter
         self.options = options
         self.source_connection = self.__connection_class(source)(**self.source) if source is not None else None
         self.target_connection = self.__connection_class(target)(**self.target) if target is not None else None
 
         self.inflector = inflector.English()
-        self.uuid = uuid.uuid1()
         self.initialize_data_directory()
 
 
     def initialize_data_directory(self) -> None:
         """Creates initial metadata file"""
-        file = self.data_directory / "index.json"
-        file.touch()
-        now = datetime.now()
+        self.meta_file = self.data_directory / "index.json"
+        if self.meta_file.exists():
+            self.uuid = uuid.UUID(self.__load_file_data(self.meta_file).get("transaction_id"))
+        else:
+            self.meta_file.touch()
+            now = datetime.now()
+            self.uuid = uuid.uuid1()
 
-        content = {
-            "application": "CDL Journal Transfer",
-            "version": __version__,
-            "initiated": now.strftime("%Y/%m/%d at %H:%M:%S"),
-            "transaction_id": str(self.uuid)
-        }
+            self.meta = {
+                "application": "CDL Journal Transporter",
+                "version": __version__,
+                "transaction_id": str(self.uuid),
+                "initiated": now.isoformat()
+            }
 
-        open(file, "w").write(json.dumps(content))
+            with open(self.meta_file, "w") as file:
+                file.write(json.dumps(self.meta))
 
 
-    def fetch_data(self, journal_paths: list, progress_reporter: AbstractProgressReporter = NullProgressReporter(None)) -> None:
+    def finalize(self) -> None:
+        pass
+
+
+    def write_to_meta_file(self, data: dict) -> None:
+        """
+        Re-writes the meta file with new data merged in.
+
+        Parameters:
+            data: dict
+                The new data to write to the file. Will be appended to the end.
+        """
+        with open(self.meta_file, "r") as file:
+            existing_content = json.loads(file.read())
+            self.meta = { **existing_content, **data }
+
+        self._replace_file_contents(self.meta_file, self.meta)
+
+
+    @staticmethod
+    def _replace_file_contents(file, data: dict) -> None:
+        """
+        Replaces the contents of a file with a JSON dump.
+
+        Useful for updating a file without messing up the formatting.
+        """
+        with open(file, "w") as open_file:
+            open_file.seek(0)
+            open_file.write(json.dumps(data, indent=2))
+            open_file.truncate()
+
+
+    def current_stage(self) -> str:
+        for stage in self.STAGES:
+            started = "{0}_started".format(stage)
+            finished = "{0}_finished".format(stage)
+            if self.meta.get(started) and not self.meta.get(finished):
+                return stage
+
+
+    ## Public API
+
+    def fetch_indexes(self, journal_paths: list) -> None:
+        """
+        Fetches indexes from the source connection and writes them to the data directory.
+
+        This must be done before fetching data. Indexing will necessarily restart the
+        entire process.
+        """
+        self.write_to_meta_file({ "indexing_started": datetime.now().isoformat() })
+        self._index(self.STRUCTURE, journal_paths=journal_paths)
+        self.write_to_meta_file({ "indexing_finished": datetime.now().isoformat() })
+
+
+    def fetch_data(self, journal_paths: list, progress: AbstractProgressReporter = NullProgressReporter(None)) -> None:
         """
         Fetches data from the source connection and writes it all to files in the data directory.
 
@@ -72,28 +192,38 @@ class TransferHandler:
         Parameters:
             journal_paths: list
                 Paths/codes of journals to be fetched
-            progress_reporter: AbstractProgressReporter
+            progress: AbstractProgressReporter
                 A progress reporter instance used to update the UI
         """
-        self.progress_reporter = progress_reporter
-        self.progress_length = 0
-        self.progress_reporter.debug("Initializing...")
-        self.__build_indexes(journal_paths)
-        self.__fetch_all_journals()
+        self.write_to_meta_file({ "fetch_started": datetime.now().isoformat() })
+        self._fetch(self.STRUCTURE)
+        self.write_to_meta_file({ "fetch_finished": datetime.now().isoformat() })
 
 
-    def put_data(self) -> None:
+    def push_data(self, journal_paths: list, progress: AbstractProgressReporter = NullProgressReporter(None)) -> None:
         """
-        WIP
+        Pushes data from the data directory to the target connection.
+
+        This method accepts `journal_paths` as a filter to be included as part of the push. This
+        will filter the journals (by "code") that are transferred. This is mainly useful for
+        when fetch and push operations are performed separately.
+
+        Parameters:
+            journal_paths: list
+                Paths/codes of journals to be pushed
+            progress: AbstractProgressReporter
+                A progress reporter instance used to update the UI
         """
-        pass
+        self.write_to_meta_file({ "push_started": datetime.now().isoformat() })
+        self._push(self.STRUCTURE)
+        self.write_to_meta_file({ "push_finished": datetime.now().isoformat() })
 
 
     ## Private
 
     ## Connection handlers
 
-    def __do_fetch(self, api_path, file, **args) -> None:
+    def _do_fetch(self, api_path, destination, type: str="json", order: bool=False, **args) -> None:
         """
         Performs a get request on the connection and commits the content to a given file.
 
@@ -111,108 +241,407 @@ class TransferHandler:
         """
         if self.source is None : return
 
-        response = self.source_connection.get(api_path, **args)
-        self.__assign_uuids(response)
-        data = json.dumps(response, indent=2)
+        self.progress.debug(f"GETting {api_path} with params {args}")
 
-        with open(file, "w") as f:
-            f.write(data)
+        try:
+            response = self.source_connection.get(api_path, **args)
+        except Exception as e:
+            return self.__handle_connection_error(e)
 
-        return response
+        if response.ok:
+            self.progress.debug(f"{response}: {'File' if type == 'file' else response.text}")
+            return self._handle_fetch_response(response, destination, type, order)
+
+        self.__handle_connection_error(ConnectionError(f"HTTP {response.status_code}: {response.text}"))
 
 
-    async def __do_put(self, record_name, data=None) -> None:
-        """WIP"""
+    def _do_push(self, api_path: str, data) -> None:
+        """
+        Performs a post request on the connection in order to create resources on the target server.
+
+        Parameters:
+            api_path: str
+                The path to direct the connection to (URL or CLI command, perhaps).
+            data: dict
+                JSON-able representation of the object to be created.
+
+        Returns:
+            dict: the JSON response
+        """
         if self.target is None : return
 
-        if data is None:
-            data_dir = self.get_data_dir(record_name)
-            with open(data_dir / "index.json") as f:
-                data = json.loads(f.read())
+        self.progress.debug(f"POSTing {api_path} with data {data}")
 
-        response = await self.target_connection.put_data("journals", data)
+        try:
+            response = self.target_connection.post(api_path, data)
+        except Exception as e:
+            return self.__handle_connection_error(e)
+
+        self.progress.debug(f"{response}: {response.text}")
+
+        if response.ok:
+            return response.json()
+        elif response.status_code < 500:
+            return
+        else:
+            self.__handle_connection_error(ConnectionError(f"HTTP {response.status_code}: {response.text}")) #pylint: disable=line-too-long
 
 
-    def __connection_class(self, server_def):
+    ## Connection helpers
+
+    def _handle_fetch_response(self, response, destination: Path, content_type: str, order: bool):
+        """
+        Handes response from fetching data, based on content type.
+
+        For JSON data, it is written to the destination file.
+        For others, it's presumed to be an attachment and is written to a file named based on
+        the Content-Disposition header.
+        """
+        if content_type == "json":
+            content = response.json()
+            self.__assign_uuids(content)
+            if order and (type(content) is list):
+                content = sorted(content, key=lambda d: d["source_record_key"])
+
+            data = json.dumps(content, indent=2)
+
+            with open(destination, "w") as f:
+                f.write(data)
+                self.progress.debug(f"Written to {f.name}")
+
+            return content
+        elif content_type == "file" and response.headers.get("content-disposition", "").startswith("attachment"):
+            re_result = re.search("filename=(.+)", response.headers["content-disposition"])
+            filename = re_result.group(1) if re_result else "unknown_attachment"
+            with open(destination / filename, "wb") as f:
+                f.write(response.content)
+
+
+    @staticmethod
+    def __connection_class(server_def):
         """
         Determines the connection class to use for a server
 
         Parameters:
             server_def: dict
                 The server definition
+
+        Returns: Class<AbstractConnection>
         """
         if server_def["type"] == "ssh":
             return SSHConnection
-        elif server_def["type"] == "http":
-            return HTTPConnection
+
+        return HTTPConnection
 
 
-    ## Sausage makers
+    ## Utilities
 
-    def __build_indexes(self, journal_paths: list) -> None:
+    def _parent_path_segments(self, parents, key):
+        ret = []
+
+        for (resource_name, resource_dict) in parents.items():
+            ret.append(resource_name)
+            if key == "source_pk":
+                ret.append(self.__source_pk(resource_dict))
+            elif key == "target_pk":
+                ret.append(self.__target_pk(resource_dict))
+            elif key == "uuid":
+                ret.append(resource_dict["uuid"])
+
+        return ret
+
+
+    def _build_url(self, parents, resource_name, resource_stub=None, pk_type="source"):
+        segments = self._parent_path_segments(parents, f"{pk_type}_pk")
+        ret = f"{'/'.join(segments)}/{resource_name}"
+        if resource_stub:
+            if pk_type == "source":
+                ret = f"{ret}/{self.__source_pk(resource_stub)}"
+            elif pk_type == "target":
+                ret = f"{ret}/{self.__target_pk(resource_stub)}"
+        return ret
+
+
+
+    def _build_path(self, parents, resource_name, resource_stub=None):
+        segments = self._parent_path_segments(parents, "uuid")
+        ret = self.data_directory
+        for segment in segments:
+            ret = ret / segment
+        ret = ret / resource_name
+        if resource_stub : ret = ret / resource_stub["uuid"]
+        return ret
+
+
+    def _fetch_index(self, path, url, **kwargs) -> list:
+        path.mkdir(exist_ok=True)
+        file = path / "index.json"
+        file.touch()
+
+        return self._do_fetch(url, file, order=True)
+
+
+    def _fetch_detail(self, path, url, resource_name, stub, **kwargs):
+        path.mkdir(exist_ok=True)
+        file = path / f"{self.inflector.singularize(resource_name)}.json"
+        file.touch()
+
+        return self._do_fetch(url, file)
+
+
+    def _extract_from_index(self, path, url, resource_name, stub, **kwargs):
+        path.mkdir(exist_ok=True)
+        file = path / f"{self.inflector.singularize(resource_name)}.json"
+        file.touch()
+
+        self._replace_file_contents(file, stub)
+
+
+    def _push_file(self, path, url, resource_name, stub, foreign_keys=[], **kwargs):
+        file = path / f"{self.inflector.singularize(resource_name)}.json"
+        data = self.__load_file_data(file)
+        response = self._do_push(url, data)
+        if response:
+            data["target_record_key"] = response["source_record_key"]
+            self._replace_file_contents(file, data)
+        return data
+
+
+    def __update_progress(self, action, resource_name, structure, parents, index=1):
+        message = action
+        for (parent_name, parent) in parents.items():
+            message = message + f" {self.inflector.singularize(parent_name)} {parent.get('title')}"
+
+        if len(parents) == 0:
+            progress_length = len(structure.get("children")) + 1 if "children" in structure else 1
+            self.progress.major(message, progress_length)
+        elif len(parents) == 1:
+            progress_length = self.__get_nested_child_count(structure)
+            self.detail_progress_length = 0
+            self.progress.minor(index, message, progress_length)
+        else:
+            self.detail_progress_length = self.detail_progress_length + 1
+            self.progress.detail(self.detail_progress_length, message)
+
+
+    def __get_nested_child_count(self, structure):
+        ret = 1
+        if type(structure) is str : breakpoint()
+        for _, child in (structure.get("children") or {}).items():
+            ret = ret + self.__get_nested_child_count(child)
+        return ret
+
+
+    ## Indexing
+
+    def _index(self, structure: dict, parents: dict = {}, **kwargs):
         """
-        Pulls down indexes for all requested journals and their subresources.
+        Gets index files for all resources.
+
+        As part of this process, UUIDs are assigned to all items in the indexes, and directories
+        are created for each resource with children.
+
+        This method is called recursively for each tree of children in STRUCTURE.
 
         Parameters:
-            journal_paths: str
-                List of journal paths/codes in the source server to filter on.
+            structure: dict
+                The portion of the STRUCTURE dict currntly being indexed.
+            parents: dict
+                Indexed resources to which the current structure belongs.
+            kwargs: dict
+                Arbitrary arguments, typically used for custom handlers.
         """
-        self.progress_reporter.debug("Fetching journal index from source.")
+        for i, (resource_name, definition) in enumerate(structure.items()):
+            config = definition.get("index")
 
-        subresource_count = len(self.STRUCTURE["journals"])
-        journal_index_file, self.journal_index = self.__build_index_file(self.data_directory, "journals", paths = ",".join(journal_paths))
+            if config == False:
+                continue
+            if not config:
+                config = {}
 
-        self.progress_reporter.major("Fetching indexes...", len(self.journal_index))
+            self.__update_progress(f"Indexing", resource_name, definition, parents)
 
-        for index, journal in enumerate(self.journal_index):
-            self.progress_reporter.minor(index, f"Fetching indexes for journal: {journal['title']}", subresource_count)
+            handler_name = config.get("handler") or self.DEFAULT_INDEX_HANDLER
+            handler = getattr(self, handler_name)
 
-            journal_uuid = journal["uuid"]
-            journal_source_pk = self.__source_pk(journal)
+            path = self._build_path(parents, resource_name)
+            url = self._build_url(parents, resource_name)
+            response = handler(path, url, **kwargs)
 
-            journal_dir = journal_index_file.parent / journal_uuid
-            journal_dir.mkdir()
-
-            for index, subresource in enumerate(self.STRUCTURE["journals"]):
-                self.progress_reporter.detail(index, f"Fetching {subresource} index")
-                file, data = self.__build_index_file(journal_dir, subresource, url = f"journals/{journal_source_pk}/{subresource}")
-                self.progress_reporter.debug(f"Indexed {len(data)} {subresource} record(s).")
-                self.progress_reporter.debug(f"{subresource} index for journal '{journal['title']}' written to file {str(file)}.")
-
-            self.progress_reporter.detail(subresource_count, "Done!", debug_message = f"Finished fetching indexes for {journal['title']}")
+            for thing in response:
+                if "children" in definition:
+                    thing_path = path / thing["uuid"]
+                    thing_path.mkdir()
+                    for _j, (child_name, child_structure) in enumerate(definition["children"].items()):
+                        new_parents = parents.copy()
+                        new_parents[resource_name] = thing
+                        self._index({ child_name: child_structure }, new_parents)
 
 
-    def __build_index_file(self, base_path: Path, resource_name: str, url: str = None, **fetch_params) -> Path:
+    def _index_journals(self, path, url, **kwargs) -> list:
         """
-        Builds an index.json file for a given path and resource.
+        Gets journals index.
 
-        Parameters:
-            root_path: Path
-                The path (excluding the resource name) where the file should be located.
-            resource_name: str
-                The name of the resource the index is being created for.
-            url: str
-                The api path (URL or CLI command path) from which to fetch the index.
-            fetch_params: dict
-                Arbitrary parameters to pass to the connection handler.
-
-        Returns: tuple(Path, Union[list, dict])
-            A tuple containing the path to the newly-created index file, and its content.
+        Same as _fetch_index, but passes paths argument to apply journal filter.
         """
-        pluralized_name = self.inflector.pluralize(resource_name)
-        dir_path = base_path / pluralized_name
-        dir_path.mkdir()
-        file_path = dir_path / "index.json"
-        file_path.touch()
+        path_str = ",".join(kwargs["journal_paths"])
 
-        url = url or pluralized_name
+        path.mkdir(exist_ok=True)
+        file = path / "index.json"
+        file.touch()
 
-        response = self.__do_fetch(url, file_path, **fetch_params)
-        self.progress_length += len(response)
-        return (file_path, response)
+        return self._do_fetch(url, file, order=True, paths=path_str)
 
 
-    def __source_pk(self, object_dict: dict) -> str:
+    ## Fetch
+
+    def _fetch(self, structure: dict, parents: dict = {}, **kwargs) -> None:
+        for i, (resource_name, definition) in enumerate(structure.items()):
+            config = definition.get("fetch")
+
+            if config == False:
+                continue
+            if not config:
+                config = {}
+
+            handler_name = config.get("handler") or self.DEFAULT_FETCH_HANDLER
+            handler = getattr(self, handler_name)
+
+            self.__update_progress(f"Fetching", resource_name, definition, parents)
+
+            resource_stubs = self.__load_file_data(self._build_path(parents, resource_name) / "index.json")
+            for stub in resource_stubs:
+                path = self._build_path(parents, resource_name, stub)
+                url = self._build_url(parents, resource_name, stub)
+                response = handler(path, url, resource_name, stub, **kwargs)
+
+                if "children" in definition:
+                    for j, (child_name, child_structure) in enumerate(definition["children"].items()):
+                        new_parents = parents.copy()
+                        new_parents[resource_name] = response
+                        self._fetch({ child_name: child_structure }, new_parents)
+
+
+    def _fetch_roles(self, path, _url, _resource_name, stub, **kwargs):
+        path.mkdir(exist_ok=True)
+        file = path / "role.json"
+        file.touch()
+        self._replace_file_contents(file, stub)
+
+        # Users are stored in their own directory outside of the journal to prevent
+        # duplication.
+        users_dir = self.data_directory / "users"
+        users_dir.mkdir(exist_ok=True)
+
+        user_dir = users_dir / stub["uuid"]
+        if user_dir.exists() : return
+
+        user_dir.mkdir()
+        user_file = user_dir / "user.json"
+        user_file.touch()
+
+        user_pk = self.__source_pk(stub)
+        self._do_fetch(f"users/{user_pk}", user_file)
+
+
+    def _fetch_files(self, path, url, resource_name, stub, **kwargs):
+        path.mkdir(exist_ok=True)
+        file = path / "file.json"
+        file.touch()
+        self._replace_file_contents(file, stub)
+
+        return self._do_fetch(url, path, "file")
+
+
+    ## Push
+
+    def _push(self, structure, parents = {}, **kwargs):
+        for _i, (resource_name, definition) in enumerate(structure.items()):
+            config = definition.get("push")
+
+            if config == False:
+                continue
+            if not config:
+                config = {}
+
+            self.__update_progress(f"Pushing", resource_name, definition, parents)
+
+            handler_name = config.get("handler") or self.DEFAULT_PUSH_HANDLER
+            handler = getattr(self, handler_name)
+
+            resource_index = self.__load_file_data(self._build_path(parents, resource_name) / "index.json")
+
+            for stub in resource_index:
+                preprocessor = config.get("preprocessor")
+                if preprocessor : getattr(self, preprocessor)(resource_index, stub)
+
+                path = self._build_path(parents, resource_name, stub)
+                url = self._build_url(parents, resource_name, pk_type="target")
+
+                fks = definition.get("foreign_keys")
+                if fks:
+                    file_dir = path / f"{self.inflector.singularize(resource_name)}.json"
+                    data = self.__load_file_data(file_dir)
+                    for fk in fks:
+                        for fk_item in data[fk]:
+                            fk_uuid = fk_item["uuid"]
+                            fk_file_path = path.parents[1] / fk / fk_uuid / f"{self.inflector.singularize(fk)}.json"
+                            fk_data = self.__load_file_data(fk_file_path)
+                            fk_item["target_record_key"] = fk_data["target_record_key"]
+
+                    self._replace_file_contents(file_dir, data)
+
+                response = handler(path, url, resource_name, stub, **kwargs)
+
+                postprocessor = config.get("postprocessor")
+                if postprocessor : getattr(self, postprocessor)(resource_index, )
+
+                if "children" in definition:
+                    for _i2, (child_name, child_structure) in enumerate(definition["children"].items()):
+                        new_parents = parents.copy()
+                        new_parents[resource_name] = response
+                        self._push({ child_name: child_structure }, new_parents)
+
+
+    def _push_roles(self, _path, _url, _resource_name, stub, **kwargs):
+        file = self.data_directory / "users" / stub["uuid"] / "user.json"
+        data = self.__load_file_data(file)
+        response = self._do_push("users", data)
+        if response:
+            data["target_record_key"] = response["source_record_key"]
+            self._replace_file_contents(file, data)
+        return data
+
+
+    def _push_files(self, path, url, _resource_name, stub, **kwargs):
+        """
+        Files need to be combined with their metadata from the index, then pushed as
+        multipart requests.
+        """
+        metadata_file = path / "file.json"
+        metadata = self.__load_file_data(metadata_file)
+
+        parent_key = metadata.get("parent_source_record_key")
+        if parent_key:
+            parent_uuid = self.__uuid(parent_key)
+            parent_file = path.parents[0] / parent_uuid / "file.json"
+            if not parent_file.exists():
+                breakpoint()
+            parent_file_data = self.__load_file_data(parent_file)
+            metadata["parent_target_record_key"] = parent_file_data.get("target_record_key")
+
+        files = [f for f in path.iterdir() if f.is_file() and f.name != "file.json"]
+        file = files[0]
+        response = self._do_push(url, { "files": { "file": open(file, "rb") }, **metadata })
+        if response:
+            metadata["target_record_key"] = response["source_record_key"]
+            self._replace_file_contents(metadata_file, metadata)
+
+
+    ## Utilities
+
+    @staticmethod
+    def __source_pk(object_dict: dict) -> str:
         """
         Extracts the primary key from the "source_record_key" index entry.
 
@@ -223,93 +652,74 @@ class TransferHandler:
         Returns: str
             The source primary key.
         """
-        if not object_dict.get("source_record_key") : return
-        return object_dict["source_record_key"].split(":")[-1]
+        if object_dict.get("source_record_key"):
+            return object_dict["source_record_key"].split(":")[-1]
+
+        return None
 
 
-    def __fetch_all_journals(self):
-        journal_index_length = len(self.journal_index)
-        self.progress_reporter.major(f"Fetching {journal_index_length} journals...", journal_index_length)
-
-        for index, journal in enumerate(self.journal_index):
-            self.current_journal_path = self.data_directory / "journals" / journal["uuid"]
-            self.__fetch_journal(journal, index)
-
-
-    def __fetch_journal(self, journal: dict, journal_number: int) -> None:
+    @staticmethod
+    def __target_pk(object_dict: dict) -> str:
         """
-        Fetches data for a provided journal index entry
+        Extracts the primary key from the "source_record_key" index entry.
+
+        Parameters:
+            object_dict: dict
+                The index entry
+
+        Returns: str
+            The source primary key.
         """
-        self.progress_reporter.debug(f"Calculating progress for journal {journal['title']}")
+        if object_dict.get("target_record_key"):
+            return object_dict["target_record_key"].split(":")[-1]
 
-        subresources = {}
-        for subresource in self.STRUCTURE["journals"]:
-            with open(self.current_journal_path / subresource / "index.json") as file:
-                subresources[subresource] = json.loads(file.read())
-
-        total_length = sum(map(lambda index: len(index), subresources.values())) + 1 # +1 for the journal itself
-
-        self.progress_reporter.minor(journal_number, f"Fetching data for journal: {journal['title']}...", total_length)
-        progress = 1
-        self.progress_reporter.detail(progress, f"Fetching journal metadata")
-
-        file = self.current_journal_path / "journal.json"
-        file.touch()
-
-        self.current_journal_source_id = self.__source_pk(journal)
-        self.__do_fetch(f"journals/{self.current_journal_source_id}", file)
-
-        for index, subresource_name in enumerate(self.STRUCTURE["journals"]):
-            self.progress_reporter.detail(progress, f"{journal['title']} - Fetching {subresource_name}")
-            potential_method_name = f"_TransferHandler__fetch_{subresource_name}"
-            if hasattr(self, potential_method_name):
-                method = getattr(self, potential_method_name)
-                for subresource in subresources[subresource_name]:
-                    method(journal, subresource)
-                    progress += 1
-            else:
-                for subresource in subresources[subresource_name]:
-                    self.__fetch_subresource(subresource_name, journal, subresource)
-                    progress += 1
-
-        self.progress_reporter.detail(progress, "Done!")
+        return None
 
 
-    def __fetch_subresource(self, name, journal, subresource) -> None:
-        subresource_dir = self.current_journal_path / name / subresource["uuid"]
-        subresource_dir.mkdir()
-        subresource_file = subresource_dir / f"{self.inflector.singularize(name)}.json"
-        subresource_file.touch()
-
-        subresource_source_key = self.__source_pk(subresource)
-
-        self.__do_fetch(f"journals/{self.current_journal_source_id}/{name}/{subresource_source_key}", subresource_file)
+    def __calculate_progress_length(self, resource) -> int:
+        pass
 
 
-    def __fetch_roles(self, journal, role_def) -> None:
-        users_path = self.data_directory / "users"
-        users_dir = users_path.mkdir(exist_ok=True)
+    @staticmethod
+    def __load_file_data(path):
+        with open(path) as file:
+            return json.loads(file.read())
 
-        user_dir = users_path / role_def["uuid"]
-        if user_dir.exists() : return
-
-        user_dir.mkdir()
-        user_file = user_dir / "user.json"
-        user_file.touch()
-
-        user_pk = self.__source_pk(role_def)
-        self.__do_fetch(f"users/{user_pk}", user_file)
+        return None
 
 
-
-
-
-
-    ## Utilities
-
-    def __assign_uuids(self, json):
-        if type(json) is list:
-            for entry in json:
+    def __assign_uuids(self, data):
+        if type(data) is list:
+            for entry in data:
                 self.__assign_uuids(entry)
-        elif json.get("source_record_key"):
-            json["uuid"] = str(uuid.uuid5(self.uuid, json["source_record_key"]))
+        elif type(data) is dict:
+            if data.get("source_record_key"):
+                data["uuid"] = self.__uuid(data["source_record_key"])
+            for (_key, value) in data.items():
+                self.__assign_uuids(value)
+
+
+    def __uuid(self, key):
+        return str(uuid.uuid5(self.uuid, key))
+
+
+    def __structure_depth(self, structure: dict) -> int:
+        ret = 0
+
+        for key, value in structure.items():
+            if value.get("children"):
+                ret = ret + 1 + self.__structure_depth(value.get("children"))
+            else:
+                ret = ret + 1
+
+        return ret
+
+    ## Error Handling
+
+    def __handle_connection_error(self, error: Exception):
+        self.progress.error(error, fatal=True)
+        raise error
+
+
+class ConnectionError(Exception):
+    pass

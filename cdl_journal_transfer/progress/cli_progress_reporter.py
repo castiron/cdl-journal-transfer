@@ -78,7 +78,10 @@ class CliProgressReporter(AbstractProgressReporter):
         if message : self._print_message(f"{self._now()} -- {message}", theme)
 
 
-    def _print_message(self, message: str, theme: str = None) -> None:
+    def _print_message(self, message: str, theme: str = None, error: bool = False, fatal_error: bool = False, **kwargs) -> None:
+        if fatal_error : theme = "error"
+        elif error : theme = "warning"
+
         cli.write(message, theme)
 
 

@@ -8,26 +8,26 @@ from cdl_journal_transfer.transfer.abstract_connection import AbstractConnection
 
 class HTTPConnection(AbstractConnection):
 
-    def get(self, path: str, **args) -> Union[list, dict]:
+    def get(self, path: str, **params) -> Union[list, dict]:
         """
         Submits a GET request to the connection.
 
         Parameters:
             path: str
                 The path to be appended to the server's "host" value
-            args: dict
+            params: dict
                 Arbitrary parameters to be submitted as URL params
 
         Returns: Union[list, dict]
             The response JSON.
         """
         url = f"{self.host.strip('/')}/{path.strip('/')}"
-        request_opts = {**self.__credentials(), **{"params": args}}
+        request_opts = self.__build_get_params(params)
         response = requests.get(url, **request_opts)
-        return response.json()
+        return response
 
 
-    def put(self, path: str, data) -> bool:
+    def post(self, path: str, data) -> dict:
         """
         Submits a POST request to the connection.
 
@@ -41,15 +41,42 @@ class HTTPConnection(AbstractConnection):
             The response content.
         """
         url = f"{self.host.strip('/')}/{path.strip('/')}/"
-        request_opts = self.__credentials()
+        request_opts = self.__build_post_params(data)
+        response = None
+
         if type(data) is list:
+            response = []
             for index, record in enumerate(data):
-                response = requests.post(url, json=record, **request_opts)
+                response.append(requests.post(url, **request_opts))
         else:
-            requests.post(url, json=data, **request_opts)
+            response = requests.post(url, **request_opts)
+
+        return response
 
 
     # Private
+
+    def __build_get_params(self, params: dict = None) -> dict:
+        ret = {
+            **self.__credentials(),
+            "params": params
+        }
+
+        return { k:v for (k,v) in ret.items() if v is not None }
+
+
+    def __build_post_params(self, params: dict = None) -> dict:
+        files = params.pop("files") if "files" in params else None
+        data_key = "data" if files else "json"
+
+        ret = {
+            **self.__credentials(),
+            "files": files,
+            data_key: params
+        }
+
+        return { k:v for (k,v) in ret.items() if v is not None }
+
 
     def __credentials(self) -> dict:
         """

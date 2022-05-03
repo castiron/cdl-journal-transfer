@@ -3,6 +3,7 @@
 
 import configparser, shutil, os
 from pathlib import Path
+from datetime import datetime
 
 import typer
 
@@ -36,7 +37,7 @@ def prepare(keep=None):
         current.unlink() if current.is_symlink() else shutil.rmtree(current)
 
     if keep:
-        real = base / datetime.strftime("%Y-%m-%dT%H:%M:%S")
+        real = base / datetime.now().strftime("%Y%m%dT%H%M%S")
         real.mkdir()
         os.symlink(real, current)
 

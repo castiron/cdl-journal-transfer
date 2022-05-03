@@ -182,6 +182,23 @@ class AbstractProgressReporter(ABC):
         self.update(ProgressUpdateType.DEBUG, debug_message = message)
 
 
+    def error(self, message: str, fatal: bool = False) -> None:
+        """
+        Reports an error to the UI.
+
+        This method does not stop any processes, it just displays them! The exception must
+        be handled elsewhere.
+
+        Parameters:
+            message: str
+                The message to display.
+            fatal: bool, optional
+                If True, end the current progress bar and print the message as deeply red as possible.
+        """
+        self._close_progress_bar()
+        self._print_message(message, error=True, fatal_error=fatal)
+
+
     def set_progress(self, progress: int) -> None:
         """
         Sets the current progress.
@@ -243,7 +260,17 @@ class AbstractProgressReporter(ABC):
             start: int, optional
                 The initial value for progress on the new bar.
         """
+        pass
 
+
+    @abstractmethod
+    def _close_progress_bar(self) -> None:
+        """
+        Ends the current progress bar, regardless of completion.
+
+        Needed for error handling, but can be re-used for setting up new progress bars.
+        """
+        pass
 
     def _handle_debug(self, message: str, update_type: ProgressUpdateType = ProgressUpdateType.DEBUG) -> None:
         """
@@ -263,13 +290,15 @@ class AbstractProgressReporter(ABC):
 
 
     @abstractmethod
-    def _print_message(self, message: str) -> None:
+    def _print_message(self, message: str, **kwargs) -> None:
         """
         Prints a message to the interface outside of or separate from the progress bar.
 
         Parameters:
             message: str
                 The message to display.
+            kwargs: dict
+                Arbitrary options to be passed to implementation (i.e. for output formatting)
         """
         pass
 

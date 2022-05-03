@@ -33,7 +33,7 @@ class AbstractConnection(ABC):
 
 
     @abstractmethod
-    def put(self, command: str, data: Any, **args) -> bool:
+    def post(self, command: str, data: Any, **args) -> bool:
         """
         Puts (transfers) data to the connection.
 

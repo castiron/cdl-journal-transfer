@@ -15,3 +15,7 @@ class NullProgressReporter(AbstractProgressReporter):
 
     def _print_message(self, message: str) -> None:
         pass
+
+
+    def _close_progress_bar(self) -> None:
+        pass
