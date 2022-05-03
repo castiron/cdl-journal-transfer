@@ -21,9 +21,19 @@ class MockResponse:
     def __init__(self, path):
         self.path = path.replace(server()["host"] + "/", "")
 
+
     def json(self):
         with open(Path("tests") / "fixtures" / f"{self.path}.json") as file:
             return json.loads(file.read())
+
+
+    def text(self):
+        with open(Path("tests") / "fixtures" / f"{self.path}.json") as file:
+            return file.read()
+
+
+    def ok(self):
+        return True
 
 
 ## Helpers
@@ -48,12 +58,22 @@ def test_setup(handler):
     assert Path(TMP_PATH).exists()
 
 
-def test_thing(monkeypatch, handler):
+def test_index(monkeypatch, handler):
 
     def mock_get(path, *args, **kwargs):
         return MockResponse(path)
 
     monkeypatch.setattr(requests, "get", mock_get)
 
-    handler.fetch_data([])
+    handler.fetch_indexes([])
+    assert (TMP_PATH / "current" / "journals" / "index.json").exists()
+
+def test_index(monkeypatch, handler):
+
+    def mock_get(path, *args, **kwargs):
+        return MockResponse(path)
+
+    monkeypatch.setattr(requests, "get", mock_get)
+
+    handler.fetch_indexes([])
     assert (TMP_PATH / "current" / "journals" / "index.json").exists()

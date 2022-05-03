@@ -1,0 +1,20 @@
+{
+  "source_record_key": "User:1",
+  "first_name": "Test",
+  "middle_name": "Mc",
+  "last_name": "Person",
+  "initials": "",
+  "affiliation": "University of Testville",
+  "salutation": "Mx.",
+  "gender": "Non-binary",
+  "email": "personmcperson@example.com",
+  "url": "https://www.personmcperson.sucks",
+  "phone": "(555) 867-5309",
+  "fax": "(555) 555-5555",
+  "mailing_address": "123 Test St, Testville, TN",
+  "country_code": "US",
+  "biography": "Hi!",
+  "interests": "Psychology, Education Psychology",
+  "title": "Master",
+  "signature": "Test McPerson\nUniversity of Testville\npersonmcperson@example.com"
+}

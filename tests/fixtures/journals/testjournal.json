@@ -1,0 +1,18 @@
+{
+  "source_record_key": "Journal:1",
+  "path": "testjournal",
+  "title": "Test Journal",
+  "abbreviation": "testjournal",
+  "description": "A journal for testing",
+  "enabled": true,
+  "contact_name": "Person McPerson",
+  "contact_email": "personmcperson@example.com",
+  "contact_phone": "(555) 867-5309",
+  "contact_fax": "(555) 555-5555",
+  "email_signature": "Journal of Testing\nhttps://testjournal.example.com",
+  "online_issn": "",
+  "print_issn": "",
+  "support_email": "personmcperson@example.com",
+  "support_name": "Person McPerson",
+  "logo": null
+}

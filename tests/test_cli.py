@@ -5,12 +5,15 @@
 
 import pytest, typer, shutil, asyncio
 
+from unittest.mock import Mock, patch
+
 from pathlib import Path
 from typer.testing import CliRunner
 
 from cdl_journal_transfer import __app_name__, __version__, cli, config, database
+from cdl_journal_transfer.transfer.transfer_handler import TransferHandler
 
-import shared
+import tests.shared
 
 runner = CliRunner()
 
@@ -35,9 +38,35 @@ def run(*args):
 
 ## Helpers
 
-
 def create_fake_server(server_name="test_server", host="https://www.example.com", username="username", password="password", type="http"):
     return run("define-server", server_name, "-t", type, "-h", host, "-u", username, "-p", password)
+
+
+## Doubles
+
+    class MockTransferHandler:
+
+        def __init__(self, data_directory, source, target, progress_reporter):
+            self.data_directory = data_directory
+            self.source = source
+            self.target = target
+            self.progress_reporter = progress_reporter
+
+
+        def fetch_indexes(self, paths):
+            self.indexed = true
+            self.index_paths = paths
+
+
+        def fetch_data(self, paths):
+            self.fetched = self.indexed
+            self.fetch_paths = paths
+
+
+        def push_data(self, paths):
+            self.pushed = self.fetched
+            self.push_paths = paths
+
 
 ## Tests!
 
@@ -64,13 +93,12 @@ def test_configure():
 
     subdir = "datatest"
 
-    result = run("configure", "-d", str(TMP_PATH / subdir), "--default-source", "source", "--default-target", "target", "--keep")
+    result = run("-v", "configure", "-d", str(TMP_PATH / subdir), "--default-source", "source", "--default-target", "target", "--keep")
     assert result.exit_code == 0
-    assert 'Applying config value "data_directory" as' in result.stdout
-    assert 'Applying config value "default_source" as "source"' in result.stdout
-    assert 'Applying config value "default_target" as "target"' in result.stdout
-    assert 'Applying config value "keep" as "True"' in result.stdout
     assert config.get("data_directory") == str(TMP_PATH / subdir)
+    assert config.get("default_source") == "source"
+    assert config.get("default_target") == "target"
+    assert config.get("keep") == "True"
 
 
 def test_create_server():
@@ -157,5 +185,19 @@ def test_transfer_errors():
     result = run("transfer", "--fetch-only")
     assert "Source server is required" in result.stdout
 
-    result = run("transfer", "--put-only")
+    result = run("transfer", "--push-only")
     assert "Target server is required" in result.stdout
+
+    result = run("transfer", "--fetch-only", "--push-only")
+    assert "--fetch-only and --push-only are both set" in result.stdout
+
+@patch("cdl_journal_transfer.cli.TransferHandler")
+def test_transfer(mock_handler):
+    run("init")
+
+    create_fake_server("test_source")
+    create_fake_server("test_target")
+
+    run("transfer", "--force", "--source", "test_source", "--fetch-only")
+
+    assert mock_handler.called

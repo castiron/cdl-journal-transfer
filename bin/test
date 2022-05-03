@@ -10,4 +10,4 @@ cd ../
 source .venv/bin/activate
 
 # Exexcute CLI command
-pytest $1
+pytest "$@"

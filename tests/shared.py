@@ -17,6 +17,12 @@ def clean_up():
 
 
 @pytest.fixture(autouse=True)
+def no_requests(monkeypatch):
+    """Prevent requests from actually sending any requests"""
+    monkeypatch.delattr("requests.sessions.Session.request")
+
+
+@pytest.fixture(autouse=True)
 def around_each():
     make_tmp()
     yield

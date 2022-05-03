@@ -1,0 +1,21 @@
+[
+  {
+    "source_record_key": "ArticleFile:1:1-1",
+    "file_id": "1",
+    "file_path": "/var/www/html/files//journals/1/articles/1/submission/original/1-1-1-SM.pdf",
+    "file_name": "1-1-1-SM.pdf",
+    "file_type": "application/pdf",
+    "original_filename": "1.pdf",
+    "date_uploaded": "2021-09-21T00:02:19+00:00",
+    "type": "submission/original",
+    "parent_source_record_key": null,
+    "is_galley_file": true,
+    "is_supplementary_file": false,
+    "title": null,
+    "description": null,
+    "creator": null,
+    "publisher": null,
+    "source": null,
+    "type_other": null
+  }
+]

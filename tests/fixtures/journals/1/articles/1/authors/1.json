@@ -1,0 +1,15 @@
+{
+  "source_record_key": "Author:1",
+  "first_name": "Bob",
+  "middle_name": "Mc",
+  "last_name": "Bobsterson",
+  "initials": "BMB",
+  "affiliation": "University of Dinkleburg",
+  "salutation": "Mr",
+  "country": "US",
+  "url": "",
+  "email": "bob.bobsterson@dinkleburg.edu",
+  "biography": "Hi, I'm Bob.",
+  "sequence": 1,
+  "primary_contact": true
+}

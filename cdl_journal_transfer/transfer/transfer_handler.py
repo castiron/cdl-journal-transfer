@@ -426,7 +426,6 @@ class TransferHandler:
 
     def __get_nested_child_count(self, structure):
         ret = 1
-        if type(structure) is str : breakpoint()
         for _, child in (structure.get("children") or {}).items():
             ret = ret + self.__get_nested_child_count(child)
         return ret
@@ -625,8 +624,7 @@ class TransferHandler:
         if parent_key:
             parent_uuid = self.__uuid(parent_key)
             parent_file = path.parents[0] / parent_uuid / "file.json"
-            if not parent_file.exists():
-                breakpoint()
+
             parent_file_data = self.__load_file_data(parent_file)
             metadata["parent_target_record_key"] = parent_file_data.get("target_record_key")
 
