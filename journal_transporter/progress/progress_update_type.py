@@ -1,5 +1,5 @@
 """Types of progress updates"""
-# cdl_journal_transfer/progress/progress_update_type.py
+# journal_transporter/progress/progress_update_type.py
 
 from enum import Enum, auto
 

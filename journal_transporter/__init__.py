@@ -1,11 +1,11 @@
-"""Top-level package for CDL journal transfer intermediary application"""
-# cdl_journal_transfer/__init__.py
+"""Top-level package for Journal Transporter intermediary application"""
+# journal_transporter/__init__.py
 
 from functools import wraps
 from asyncio import run
 import typer
 
-__app_name__ = "cdl_journal_transfer"
+__app_name__ = "journal_transporter"
 __version__ = "0.1.0"
 
 (

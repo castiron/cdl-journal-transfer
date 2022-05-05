@@ -6,7 +6,7 @@ dir_path=$(dirname $self_path)
 cd "$dir_path"
 
 # cd up until we find (what is most likely) the CLI app folder
-while [[ $PWD != '/' && ${PWD##*/} != 'cdl_journal_transfer' ]]; do cd ..; done
+while [[ $PWD != '/' && ${PWD##*/} != 'journal_transporter' ]]; do cd ..; done
 
 printf "Creating Python virtual environment and installing requirements. Please wait..."
 
@@ -16,12 +16,12 @@ source ./.venv/bin/activate
 python -m pip install -r requirements.txt
 
 # Initialize CLI app
-python -m cdl_journal_transfer init "$@" > /dev/null
+python -m journal_transporter init "$@" > /dev/null
 
-printf "\n$(tput setaf 2)CDL Journal Transfer CLI Application initialized!$(tput sgr0)\n\n"
-printf "$(tput setaf 5)You can now invoke the application with bin/cdl-jt <CMD> or by activating your virtual environment and running pythom -m cdl_journal_trasnfer <CMD>$(tput sgr0)\n\n"
+printf "\n$(tput setaf 2)Journal Transporter CLI Application initialized!$(tput sgr0)\n\n"
+printf "$(tput setaf 5)You can now invoke the application with bin/jt <CMD> or by activating your virtual environment and running pythom -m journal_transporter <CMD>$(tput sgr0)\n\n"
 
-# Add shortcut /usr/local/bin so it can be executed from anywhere as cdl-jt
-ln -s $dir_path/cdl-jt /usr/local/bin/cdl-jt
+# Add shortcut /usr/local/bin so it can be executed from anywhere as jt
+ln -s $dir_path/jt /usr/local/bin/jt
 
-python -m cdl_journal_transfer --help
+python -m journal_transporter --help

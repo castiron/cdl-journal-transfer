@@ -4,7 +4,7 @@ import json, requests
 
 from typing import Union, Any
 
-from cdl_journal_transfer.transfer.abstract_connection import AbstractConnection
+from journal_transporter.transfer.abstract_connection import AbstractConnection
 
 class HTTPConnection(AbstractConnection):
 

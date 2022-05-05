@@ -7,8 +7,8 @@ import pytest, shutil, json, requests
 
 from pathlib import Path
 
-from cdl_journal_transfer import database, config
-from cdl_journal_transfer.transfer.transfer_handler import TransferHandler
+from journal_transporter import database, config
+from journal_transporter.transfer.transfer_handler import TransferHandler
 
 from tests.shared import around_each, TMP_PATH
 

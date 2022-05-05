@@ -1,19 +1,19 @@
 """Interface for handling journal transfers from source to target servers"""
-# cdl_journal_transfer/transfer/handler.py
-
-import json, uuid, inflector, re
+# journal_transporter/transfer/handler.py
 
 from pathlib import Path
 from datetime import datetime
 
-from cdl_journal_transfer import __version__
+import json, uuid, inflector, re
 
-from cdl_journal_transfer.transfer.http_connection import HTTPConnection
-from cdl_journal_transfer.transfer.ssh_connection import SSHConnection
 
-from cdl_journal_transfer.progress.abstract_progress_reporter import AbstractProgressReporter
-from cdl_journal_transfer.progress.null_progress_reporter import NullProgressReporter
-from cdl_journal_transfer.progress.progress_update_type import ProgressUpdateType
+from journal_transporter import __version__
+
+from journal_transporter.transfer.http_connection import HTTPConnection
+from journal_transporter.transfer.ssh_connection import SSHConnection
+
+from journal_transporter.progress.abstract_progress_reporter import AbstractProgressReporter
+from journal_transporter.progress.null_progress_reporter import NullProgressReporter
 
 class TransferHandler:
 
@@ -64,6 +64,9 @@ class TransferHandler:
                             "push": {
                                 "handler": "_push_files"
                             }
+                        },
+                        "reviews": {
+                            "foreign_keys": ["reviewer"]
                         }
                     }
                 }
@@ -110,7 +113,7 @@ class TransferHandler:
             self.uuid = uuid.uuid1()
 
             self.meta = {
-                "application": "CDL Journal Transporter",
+                "application": "Journal Transporter",
                 "version": __version__,
                 "transaction_id": str(self.uuid),
                 "initiated": now.isoformat()
@@ -153,6 +156,7 @@ class TransferHandler:
 
 
     def current_stage(self) -> str:
+        """Gets the current stage the transfer is in: index, fetch, or push."""
         for stage in self.STAGES:
             started = "{0}_started".format(stage)
             finished = "{0}_finished".format(stage)

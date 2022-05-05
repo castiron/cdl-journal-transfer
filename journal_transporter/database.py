@@ -1,5 +1,5 @@
 """This module provides access to and management of the data directory."""
-# cdl_journal_transfer/database.py
+# journal_transporter/database.py
 
 import configparser, shutil, os
 from pathlib import Path
@@ -7,7 +7,7 @@ from datetime import datetime
 
 import typer
 
-from cdl_journal_transfer import WRITE_ERROR, SUCCESS, __app_name__, config
+from journal_transporter import WRITE_ERROR, SUCCESS, __app_name__, config
 
 
 def get_database_path() -> Path:

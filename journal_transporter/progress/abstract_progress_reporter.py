@@ -26,14 +26,14 @@ The general workflow is:
 There is also the DEBUG type, which does not display progress bars, but instead outputs a
 (potentially very) verbose log.
 """
-# cdl_journal_transfer/progress/abstract_progress_reporter.py
+# journal_transporter/progress/abstract_progress_reporter.py
 
 from abc import ABC, abstractmethod
 from typing import Any
 from datetime import datetime
 from enum import Enum
 
-from cdl_journal_transfer.progress.progress_update_type import ProgressUpdateType
+from journal_transporter.progress.progress_update_type import ProgressUpdateType
 
 
 class AbstractProgressReporter(ABC):

@@ -1,4 +1,4 @@
-# tests/test_cdl_journal_transfer.py
+# tests/test_journal_transporter.py
 
 # All tests should only write files to the test/tmp directory,
 # which will be cleaned up automatically at the end of each test.
@@ -10,8 +10,8 @@ from unittest.mock import Mock, patch
 from pathlib import Path
 from typer.testing import CliRunner
 
-from cdl_journal_transfer import __app_name__, __version__, cli, config, database
-from cdl_journal_transfer.transfer.transfer_handler import TransferHandler
+from journal_transporter import __app_name__, __version__, cli, config, database
+from journal_transporter.transfer.transfer_handler import TransferHandler
 
 import tests.shared
 
@@ -191,7 +191,7 @@ def test_transfer_errors():
     result = run("transfer", "--fetch-only", "--push-only")
     assert "--fetch-only and --push-only are both set" in result.stdout
 
-@patch("cdl_journal_transfer.cli.TransferHandler")
+@patch("journal_transporter.cli.TransferHandler")
 def test_transfer(mock_handler):
     run("init")
 

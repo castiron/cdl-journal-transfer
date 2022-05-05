@@ -21,7 +21,7 @@ Color standards:
     Green background: great success
     Red background: fatal error
 """
-# cdl_journal_transfer/cli.py
+# journal_transporter/cli.py
 
 from pathlib import Path
 from typing import Optional, List, Union
@@ -29,9 +29,9 @@ from enum import Enum
 
 import typer, asyncio, os
 
-from cdl_journal_transfer import __app_name__, __version__, ERRORS, config, database
-from cdl_journal_transfer.transfer.transfer_handler import TransferHandler
-from cdl_journal_transfer.progress.cli_progress_reporter import CliProgressReporter
+from journal_transporter import __app_name__, __version__, ERRORS, config, database
+from journal_transporter.transfer.transfer_handler import TransferHandler
+from journal_transporter.progress.cli_progress_reporter import CliProgressReporter
 
 class ConnectionType(str, Enum):
     ssh = "ssh"
@@ -235,7 +235,7 @@ def init(
     It creates the data directory and config file, so is required before
     any other configuration.
     """
-    write("Initializing CDL Journal Portability Command Line App...", "header", "after")
+    write("Initializing Journal Transporter Command Line App...", "header", "after")
     data_directory = Path(data_directory) if data_directory else config.CONFIG_DIR_PATH
     data_directory.mkdir(exist_ok=True)
 

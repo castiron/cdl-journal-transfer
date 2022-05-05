@@ -1,4 +1,4 @@
-from cdl_journal_transfer.progress.abstract_progress_reporter import AbstractProgressReporter
+from journal_transporter.progress.abstract_progress_reporter import AbstractProgressReporter
 
 class NullProgressReporter(AbstractProgressReporter):
 

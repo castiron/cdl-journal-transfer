@@ -6,10 +6,10 @@ dir_path=$(dirname $self_path)
 cd "$dir_path"
 
 # cd up until we find (what is most likely) the CLI app folder
-while [[ $PWD != '/' && ${PWD##*/} != 'cdl_journal_transfer' ]]; do cd ..; done
+while [[ $PWD != '/' && ${PWD##*/} != 'journal_transporter' ]]; do cd ..; done
 
 # Activate virtual env
 source .venv/bin/activate
 
 # Exexcute CLI command
-python -m cdl_journal_transfer "$@"
+python -m journal_transporter "$@"

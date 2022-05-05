@@ -1,12 +1,12 @@
 """This module provides access and management of a configuration file."""
-# cdl_journal_transfer/config.py
+# journal_transporter/config.py
 
 from configparser import ConfigParser, NoOptionError, NoSectionError
 from pathlib import Path
 
 import typer, os
 
-from cdl_journal_transfer import (
+from journal_transporter import (
     WRITE_ERROR,
     READ_ERROR,
     DIR_ERROR,

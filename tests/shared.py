@@ -2,7 +2,7 @@ import pytest, shutil
 
 from pathlib import Path
 
-from cdl_journal_transfer import config
+from journal_transporter import config
 
 TMP_PATH = Path("./tests/tmp")
 

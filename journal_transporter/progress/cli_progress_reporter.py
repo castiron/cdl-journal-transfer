@@ -4,11 +4,11 @@ Progress reporter for CLI app.
 The interface for this reporter is the typer module itself, as that is the only way
 to end and create new progress bars.
 """
-# cdl_journal_transfer/progress/cli_progress_reporter.py
+# journal_transporter/progress/cli_progress_reporter.py
 
-from cdl_journal_transfer.progress.abstract_progress_reporter import AbstractProgressReporter
-from cdl_journal_transfer.progress.progress_update_type import ProgressUpdateType
-from cdl_journal_transfer import cli
+from journal_transporter.progress.abstract_progress_reporter import AbstractProgressReporter
+from journal_transporter.progress.progress_update_type import ProgressUpdateType
+from journal_transporter import cli
 
 class CliProgressReporter(AbstractProgressReporter):
 

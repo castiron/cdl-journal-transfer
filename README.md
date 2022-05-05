@@ -14,16 +14,16 @@ Clone this repo and navigate to it. Install dependencies with `bin/install`.
 CLI commands can be executed with:
 
 ```shell
-bin/cdl-jt <COMMAND>
+bin/jt <COMMAND>
 ```
 
 or
 
 ```shell
-python -m cdl_journal_transfer <COMMAND>
+python -m journal_transporter <COMMAND>
 ```
 
-Note: If you use the latter syntax and invoke python directly, you'll likely want to activate the virtual environment first with `source ./venv/bin/activate`. `bin/cdl-jt` does this for you.
+Note: If you use the latter syntax and invoke python directly, you'll likely want to activate the virtual environment first with `source ./venv/bin/activate`. `bin/jt` does this for you.
 
 ### Options
 
@@ -48,19 +48,19 @@ Note: If you use the latter syntax and invoke python directly, you'll likely wan
   transfer       Initiates a transfer of data from a source server to a target server.
 ```
 
-All commands are described by invoking `bin/cdl-jt --help`. Detail on individual commands can be viewed with `bin/cdl-jt <COMMAND> --help`.
+All commands are described by invoking `bin/jt --help`. Detail on individual commands can be viewed with `bin/jt <COMMAND> --help`.
 
 ### Workflow
 
 Generally speaking, the process of transferring a journal from a source server to a target server involves the following commands:
 
 ```shell
-cdl-jt define-server <source_server_name> --host <source_server_plugin_api_url> --username <auth_user> --password <auth_password>
-cdl-jt define-server <target_server_name> --host <destination_server_plugin_api_url> --username <auth_user> --password <auth_password>
-cdl-jt transfer --source <source_server_name> --target <target_server_name> --journals <journal_path>
+jt define-server <source_server_name> --host <source_server_plugin_api_url> --username <auth_user> --password <auth_password>
+jt define-server <target_server_name> --host <destination_server_plugin_api_url> --username <auth_user> --password <auth_password>
+jt transfer --source <source_server_name> --target <target_server_name> --journals <journal_path>
 ```
 
-See documentation for the `transfer` command (`cdl-jt transfer --help`) for more options.
+See documentation for the `transfer` command (`jt transfer --help`) for more options.
 
 # Licensing
 Dunno

@@ -1,6 +1,6 @@
 import asyncio, asyncssh, json
 
-from cdl_journal_transfer.transfer.abstract_connection import AbstractConnection
+from journal_transporter.transfer.abstract_connection import AbstractConnection
 
 class SSHConnection(AbstractConnection):
 
