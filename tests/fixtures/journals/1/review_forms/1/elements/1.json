@@ -1,0 +1,13 @@
+{
+  "source_record_key": "ReviewFormElement:1",
+  "sequence": 1,
+  "type": "radio_buttons",
+  "required": true,
+  "visible_to_author": true,
+  "question": "What's up?",
+  "responses": [
+    "Nothing much",
+    "The sky",
+    "Your mom"
+  ]
+}

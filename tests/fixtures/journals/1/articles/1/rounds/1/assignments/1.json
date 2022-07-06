@@ -1,0 +1,48 @@
+{
+  "source_record_key": "ReviewAssignment:1",
+  "review_form": {
+    "source_record_key": "ReviewForm:1"
+  },
+  "reviewer": {
+    "source_record_key": "User:1"
+  },
+  "editor": {
+    "source_record_key": "User:1"
+  },
+  "review_file": {
+    "source_record_key": "ArticleFile:1-1"
+  },
+  "reviewer_file": null,
+  "supp_files": [],
+  "review_type": "double-blind",
+  "review_method": "double-blind",
+  "date_assigned": "2020-01-02T00:01:02+00:00",
+  "date_notified": "2020-01-02T00:01:02+00:00",
+  "date_confirmed": "2020-01-02T00:01:02+00:00",
+  "date_completed": "2020-01-02T00:01:02+00:00",
+  "date_acknowledged": "2020-01-02T00:01:02+00:00",
+  "date_reminded": "2020-01-02T00:01:02+00:00",
+  "date_due": "2020-01-02T00:01:02+00:00",
+  "date_response_due": "2020-01-02T00:01:02+00:00",
+  "declined": false,
+  "replaced": false,
+  "cancelled": false,
+  "quality": 90,
+  "date_rated": "2020-01-02T00:01:02+00:00",
+  "has_response": true,
+  "comments": [
+    {
+      "source_record_key": "ArticleComment:1",
+      "comment_title": "Comment!",
+      "comments": "Hi",
+      "date_posted": "2020-01-02T00:01:02+00:00",
+      "date_modified": "2020-01-02T00:01:02+00:00",
+      "visible_to_author": true,
+      "author": {
+        "source_record_key": "User:1"
+      },
+      "role": "reviewer",
+      "comment_type": "peer_review"
+    }
+  ]
+}

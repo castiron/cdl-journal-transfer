@@ -1,0 +1,9 @@
+[
+  {
+    "source_record_key": "AssignmentResponse:1",
+    "review_form_element": {
+      "source_record_key": "ReviewFormElement:1"
+    },
+    "response_value": "The sky"
+  }
+]

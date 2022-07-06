@@ -31,7 +31,6 @@ There is also the DEBUG type, which does not display progress bars, but instead 
 from abc import ABC, abstractmethod
 from typing import Any
 from datetime import datetime
-from enum import Enum
 
 from journal_transporter.progress.progress_update_type import ProgressUpdateType
 
@@ -112,7 +111,7 @@ class AbstractProgressReporter(ABC):
                 else:
                     # If not verbose, update the major progress bar progress and label.
                     self.subtask_length = length
-                    if progress : self.set_progress(self.progress + (progress / self.subtask_length))
+                    if progress : self.set_progress(progress)
                     if message : self.set_message(message)
                     self._update_interface()
             elif update_type is ProgressUpdateType.DETAIL:

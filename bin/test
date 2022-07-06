@@ -4,7 +4,9 @@
 self_path=$(realpath $0)
 dir_path=$(dirname $self_path)
 cd "$dir_path"
-cd ../
+
+# cd up until we find (what is most likely) the CLI app folder
+while [[ $PWD != '/' && ${PWD##*/} != 'journal_transporter' ]]; do cd ..; done
 
 # Activate virtual env
 source .venv/bin/activate

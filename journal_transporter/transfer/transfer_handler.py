@@ -4,8 +4,10 @@
 from pathlib import Path
 from datetime import datetime
 
-import json, uuid, inflector, re
-
+import json
+import uuid
+import re
+import inflector
 
 from journal_transporter import __version__
 
@@ -15,22 +17,46 @@ from journal_transporter.transfer.ssh_connection import SSHConnection
 from journal_transporter.progress.abstract_progress_reporter import AbstractProgressReporter
 from journal_transporter.progress.null_progress_reporter import NullProgressReporter
 
-class TransferHandler:
+class TransferHandler: #pylint: disable=too-many-instance-attributes
+    """
+    Handles the transfer of journal data from source servers to target server.
 
+    Transfers are split into 3 distinct phases: indexing, fetching details, and pushing. For each,
+    iterate through STRUCTURE, handling resources in the defined order.
+    """
     STAGE_INDEXING = "indexing"
     STAGE_FETCHING = "fetching"
     STAGE_PUSHING = "pushing"
     STAGES = [STAGE_INDEXING, STAGE_FETCHING, STAGE_PUSHING]
 
+    DEFAULT_PREPROCESSOR = "_noop_preprocessor"
     DEFAULT_INDEX_HANDLER = "_fetch_index"
-    DEFAULT_FETCH_HANDLER = "_fetch_detail"
-    DEFAULT_PUSH_HANDLER = "_push_file"
+    DEFAULT_FETCH_HANDLER = "_fetch_data"
+    DEFAULT_PUSH_HANDLER = "_push_data"
 
+    # STRUCTURE
+    # A dict that defines the resources to be indexed, fetched, and pulled, and
+    # defines any custom behaviors required for each. Resources will be handled in the order
+    # defined here.
+    #
+    # For each resource, define a key with the name of the resource. The value must be a dict
+    # containing any (or none) of the following keys:
+    #   index: define behavior of the index operations
+    #   fetch: define behavior of the fetch operation
+    #   push: define behavior of the push operation
+    #   foreign_keys: a dict of { fk_key_name: fk_resource_name }
+    #   children: child definition resources (following the same resource structure)
+    #
+    # Operation definitions:
+    #   For each operation key, the values can be either {False} to skip the operation, or a dict
+    #   with any (or none) of the following keys:
+    #       handler: the name of the method to handle this operation in place of the default
     STRUCTURE = {
         "users": {
+            # Users are indexed as part of journals/roles in order to collect only
+            # those users who have roles relevant to this transfer operation.
             "index": False,
-            "fetch": False,
-            "push": False
+            # "push": False
         },
         "journals": {
             "name_key": "title",
@@ -39,19 +65,43 @@ class TransferHandler:
             },
             "children": {
                 "roles": {
-                    "fetch": {
-                        "handler": "_fetch_roles"
+                    "foreign_keys": {
+                        "user": "users"
                     },
-                    "push": {
-                        "handler": "_push_roles"
+                    "index": {
+                        "handler": "_index_roles"
+                    },
+                    "fetch": {
+                        "handler": "_extract_from_index"
+                    },
+                    # "push": False
+                },
+                "issues": {
+                    "name_key": "title"
+                },
+                "sections": {
+                    "name_key": "title"
+                },
+                "review_forms": {
+                    "children": {
+                        "elements": {}
                     }
                 },
-                "issues": {},
-                "sections": {},
                 "articles": {
                     "name_key": "title",
-                    "foreign_keys": ["issues", "sections"],
+                    "foreign_keys": {
+                        "issues": "issues",
+                        "sections": "sections"
+                    },
                     "children": {
+                        "editors": {
+                            "foreign_keys": {
+                                "editor": "users"
+                            },
+                            "fetch": {
+                                "handler": "_extract_from_index"
+                            }
+                        },
                         "authors": {
                             "fetch": {
                                 "handler": "_extract_from_index"
@@ -65,14 +115,40 @@ class TransferHandler:
                                 "handler": "_push_files"
                             }
                         },
-                        "reviews": {
-                            "foreign_keys": ["reviewer"]
+                        "rounds": {
+                            "children": {
+                                "assignments": {
+                                    "foreign_keys": {
+                                        "editor": "users",
+                                        "reviewer": "users",
+                                        "review_file": "files",
+                                        "review_form": "review_forms"
+                                    },
+                                    "children": {
+                                        "response": {
+                                            "foreign_keys": {
+                                                "review_form_element": "elements"
+                                            },
+                                            "fetch": {
+                                                "handler": "_extract_from_index"
+                                            },
+                                            "push": {
+                                                "preprocessor": "_preprocess_assignment_responses"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
         }
     }
+
+    ############################
+    ## INITITALIZATION / LIFECYCLE
+    ############################
 
     def __init__(
         self, data_directory: str, source: dict = None, target: dict = None,
@@ -95,6 +171,7 @@ class TransferHandler:
         self.target = target
         self.progress = progress_reporter
         self.options = options
+        # pylint: disable=abstract-class-instantiated
         self.source_connection = self.__connection_class(source)(**self.source) if source is not None else None
         self.target_connection = self.__connection_class(target)(**self.target) if target is not None else None
 
@@ -103,29 +180,31 @@ class TransferHandler:
 
 
     def initialize_data_directory(self) -> None:
-        """Creates initial metadata file"""
-        self.meta_file = self.data_directory / "index.json"
-        if self.meta_file.exists():
-            self.uuid = uuid.UUID(self.__load_file_data(self.meta_file).get("transaction_id"))
+        """Creates or parses transfer metadata file."""
+        self.metadata_file = self.data_directory / "index.json"
+        if self.metadata_file.exists():
+            self.uuid = uuid.UUID(self.__load_file_data(self.metadata_file).get("transaction_id"))
         else:
-            self.meta_file.touch()
+            self.metadata_file.touch()
             now = datetime.now()
             self.uuid = uuid.uuid1()
 
-            self.meta = {
+            self.metadata = {
                 "application": "Journal Transporter",
                 "version": __version__,
                 "transaction_id": str(self.uuid),
                 "initiated": now.isoformat()
             }
 
-            with open(self.meta_file, "w") as file:
-                file.write(json.dumps(self.meta))
+            with open(self.metadata_file, "w") as file:
+                file.write(json.dumps(self.metadata))
 
 
     def finalize(self) -> None:
         pass
 
+
+    # Meta file management
 
     def write_to_meta_file(self, data: dict) -> None:
         """
@@ -135,15 +214,15 @@ class TransferHandler:
             data: dict
                 The new data to write to the file. Will be appended to the end.
         """
-        with open(self.meta_file, "r") as file:
+        with open(self.metadata_file, "r") as file:
             existing_content = json.loads(file.read())
-            self.meta = { **existing_content, **data }
+            self.metadata = { **existing_content, **data }
 
-        self._replace_file_contents(self.meta_file, self.meta)
+        self._replace_file_contents(self.metadata_file, self.metadata)
 
 
     @staticmethod
-    def _replace_file_contents(file, data: dict) -> None:
+    def _replace_file_contents(file: Path, data: dict) -> None:
         """
         Replaces the contents of a file with a JSON dump.
 
@@ -160,11 +239,13 @@ class TransferHandler:
         for stage in self.STAGES:
             started = "{0}_started".format(stage)
             finished = "{0}_finished".format(stage)
-            if self.meta.get(started) and not self.meta.get(finished):
+            if self.metadata.get(started) and not self.metadata.get(finished):
                 return stage
 
 
-    ## Public API
+    ############################
+    ## PUBLIC API
+    ############################
 
     def fetch_indexes(self, journal_paths: list) -> None:
         """
@@ -172,13 +253,18 @@ class TransferHandler:
 
         This must be done before fetching data. Indexing will necessarily restart the
         entire process.
+
+        Parameters:
+            journal_paths: list
+                Paths/codes of journals to be indexed. This will effectively filter the fetching
+                process, too.
         """
         self.write_to_meta_file({ "indexing_started": datetime.now().isoformat() })
         self._index(self.STRUCTURE, journal_paths=journal_paths)
         self.write_to_meta_file({ "indexing_finished": datetime.now().isoformat() })
 
 
-    def fetch_data(self, journal_paths: list, progress: AbstractProgressReporter = NullProgressReporter(None)) -> None:
+    def fetch_data(self, journal_paths: list) -> None:
         """
         Fetches data from the source connection and writes it all to files in the data directory.
 
@@ -204,7 +290,7 @@ class TransferHandler:
         self.write_to_meta_file({ "fetch_finished": datetime.now().isoformat() })
 
 
-    def push_data(self, journal_paths: list, progress: AbstractProgressReporter = NullProgressReporter(None)) -> None:
+    def push_data(self, journal_paths: list) -> None:
         """
         Pushes data from the data directory to the target connection.
 
@@ -223,9 +309,11 @@ class TransferHandler:
         self.write_to_meta_file({ "push_finished": datetime.now().isoformat() })
 
 
-    ## Private
+    ## Private-ish
 
-    ## Connection handlers
+    ############################
+    ## CONNECTION HANDLING
+    ############################
 
     def _do_fetch(self, api_path, destination, type: str="json", order: bool=False, **args) -> None:
         """
@@ -239,9 +327,8 @@ class TransferHandler:
             args: dict
                 Arbitrary kwargs to pass to the connection class.
 
-        Returns:
-            Union[list, dict]
-                The JSON response
+        Returns: Union[list, dict]
+            The JSON response
         """
         if self.source is None : return
 
@@ -250,11 +337,14 @@ class TransferHandler:
         try:
             response = self.source_connection.get(api_path, **args)
         except Exception as e:
+            return
             return self.__handle_connection_error(e)
 
         if response.ok:
             self.progress.debug(f"{response}: {'File' if type == 'file' else response.text}")
             return self._handle_fetch_response(response, destination, type, order)
+        else:
+            return
 
         self.__handle_connection_error(ConnectionError(f"HTTP {response.status_code}: {response.text}"))
 
@@ -269,29 +359,31 @@ class TransferHandler:
             data: dict
                 JSON-able representation of the object to be created.
 
-        Returns:
-            dict: the JSON response
+        Returns: dict
+            the JSON response
         """
-        if self.target is None : return
+        if self.target is None:
+            return
 
         self.progress.debug(f"POSTing {api_path} with data {data}")
 
         try:
             response = self.target_connection.post(api_path, data)
         except Exception as e:
+            return
             return self.__handle_connection_error(e)
 
         self.progress.debug(f"{response}: {response.text}")
 
         if response.ok:
             return response.json()
-        elif response.status_code < 500:
+        if response.status_code < 500:
             return
-        else:
-            self.__handle_connection_error(ConnectionError(f"HTTP {response.status_code}: {response.text}")) #pylint: disable=line-too-long
 
+        return
 
-    ## Connection helpers
+        self.__handle_connection_error(ConnectionError(f"HTTP {response.status_code}: {response.text}")) #pylint: disable=line-too-long
+
 
     def _handle_fetch_response(self, response, destination: Path, content_type: str, order: bool):
         """
@@ -300,6 +392,19 @@ class TransferHandler:
         For JSON data, it is written to the destination file.
         For others, it's presumed to be an attachment and is written to a file named based on
         the Content-Disposition header.
+
+        Parameters:
+            response: requests.response
+                The response from the source server
+            destination: Path
+                Where the data should be placed.
+            content_type: str<json|file>
+                Determines if the content is written to a file or streamed into its own file as binary.
+            order: bool
+                For JSON content (specifically, lists), should it be sorted by source_record_key after being parsed?
+
+        Returns: JSON, None
+            The response content (if content_type is 'json', else None)
         """
         if content_type == "json":
             content = response.json()
@@ -331,111 +436,17 @@ class TransferHandler:
                 The server definition
 
         Returns: Class<AbstractConnection>
+            The class to be used for the connection
         """
-        if server_def["type"] == "ssh":
+        if server_def.get("type") == "ssh":
             return SSHConnection
 
         return HTTPConnection
 
 
-    ## Utilities
-
-    def _parent_path_segments(self, parents, key):
-        ret = []
-
-        for (resource_name, resource_dict) in parents.items():
-            ret.append(resource_name)
-            if key == "source_pk":
-                ret.append(self.__source_pk(resource_dict))
-            elif key == "target_pk":
-                ret.append(self.__target_pk(resource_dict))
-            elif key == "uuid":
-                ret.append(resource_dict["uuid"])
-
-        return ret
-
-
-    def _build_url(self, parents, resource_name, resource_stub=None, pk_type="source"):
-        segments = self._parent_path_segments(parents, f"{pk_type}_pk")
-        ret = f"{'/'.join(segments)}/{resource_name}"
-        if resource_stub:
-            if pk_type == "source":
-                ret = f"{ret}/{self.__source_pk(resource_stub)}"
-            elif pk_type == "target":
-                ret = f"{ret}/{self.__target_pk(resource_stub)}"
-        return ret
-
-
-
-    def _build_path(self, parents, resource_name, resource_stub=None):
-        segments = self._parent_path_segments(parents, "uuid")
-        ret = self.data_directory
-        for segment in segments:
-            ret = ret / segment
-        ret = ret / resource_name
-        if resource_stub : ret = ret / resource_stub["uuid"]
-        return ret
-
-
-    def _fetch_index(self, path, url, **kwargs) -> list:
-        path.mkdir(exist_ok=True)
-        file = path / "index.json"
-        file.touch()
-
-        return self._do_fetch(url, file, order=True)
-
-
-    def _fetch_detail(self, path, url, resource_name, stub, **kwargs):
-        path.mkdir(exist_ok=True)
-        file = path / f"{self.inflector.singularize(resource_name)}.json"
-        file.touch()
-
-        return self._do_fetch(url, file)
-
-
-    def _extract_from_index(self, path, url, resource_name, stub, **kwargs):
-        path.mkdir(exist_ok=True)
-        file = path / f"{self.inflector.singularize(resource_name)}.json"
-        file.touch()
-
-        self._replace_file_contents(file, stub)
-
-
-    def _push_file(self, path, url, resource_name, stub, foreign_keys=[], **kwargs):
-        file = path / f"{self.inflector.singularize(resource_name)}.json"
-        data = self.__load_file_data(file)
-        response = self._do_push(url, data)
-        if response:
-            data["target_record_key"] = response["source_record_key"]
-            self._replace_file_contents(file, data)
-        return data
-
-
-    def __update_progress(self, action, resource_name, structure, parents, index=1):
-        message = action
-        for (parent_name, parent) in parents.items():
-            message = message + f" {self.inflector.singularize(parent_name)} {parent.get('title')}"
-
-        if len(parents) == 0:
-            progress_length = len(structure.get("children")) + 1 if "children" in structure else 1
-            self.progress.major(message, progress_length)
-        elif len(parents) == 1:
-            progress_length = self.__get_nested_child_count(structure)
-            self.detail_progress_length = 0
-            self.progress.minor(index, message, progress_length)
-        else:
-            self.detail_progress_length = self.detail_progress_length + 1
-            self.progress.detail(self.detail_progress_length, message)
-
-
-    def __get_nested_child_count(self, structure):
-        ret = 1
-        for _, child in (structure.get("children") or {}).items():
-            ret = ret + self.__get_nested_child_count(child)
-        return ret
-
-
-    ## Indexing
+    ############################
+    ## INDEX
+    ############################
 
     def _index(self, structure: dict, parents: dict = {}, **kwargs):
         """
@@ -454,22 +465,26 @@ class TransferHandler:
             kwargs: dict
                 Arbitrary arguments, typically used for custom handlers.
         """
-        for i, (resource_name, definition) in enumerate(structure.items()):
+        for _i, (resource_name, definition) in enumerate(structure.items()):
             config = definition.get("index")
 
-            if config == False:
+            if config == False: #pylint: disable=singleton-comparison
                 continue
             if not config:
                 config = {}
 
-            self.__update_progress(f"Indexing", resource_name, definition, parents)
+            self.__update_progress("Indexing", resource_name, definition, parents)
 
-            handler_name = config.get("handler") or self.DEFAULT_INDEX_HANDLER
-            handler = getattr(self, handler_name)
+            preprocessor = self._get_preprocessor(config, self.DEFAULT_PREPROCESSOR)
+            handler = self._get_handler(config, self.DEFAULT_INDEX_HANDLER)
 
             path = self._build_path(parents, resource_name)
             url = self._build_url(parents, resource_name)
+
+            preprocessor(resource_name, definition, parents, path)
             response = handler(path, url, **kwargs)
+
+            self.__increment_progress("Indexing", resource_name, definition, parents)
 
             for thing in response:
                 if "children" in definition:
@@ -479,6 +494,28 @@ class TransferHandler:
                         new_parents = parents.copy()
                         new_parents[resource_name] = thing
                         self._index({ child_name: child_structure }, new_parents)
+
+
+    def _fetch_index(self, path, url, **kwargs) -> list:
+        """
+        Default handler for fetching and writing index data.
+
+        Parameters:
+            path: Path
+                The path to the file where the data should be written.
+            url: str
+                The URL from which index data should be fetched.
+            kwargs: dict
+                Arbitrary arguments to be passed to requests.
+
+        Returns: list<dict>
+            The fetched index data
+        """
+        path.mkdir(exist_ok=True)
+        file = path / "index.json"
+        file.touch()
+
+        return self._do_fetch(url, file, order=True)
 
 
     def _index_journals(self, path, url, **kwargs) -> list:
@@ -496,58 +533,119 @@ class TransferHandler:
         return self._do_fetch(url, file, order=True, paths=path_str)
 
 
-    ## Fetch
+    def _index_roles(self, path, url, **kwargs):
+        """
+        Handler for fetching roles and users.
+
+        Performs a normal indexing operation, but then also builds a users index.
+        """
+        roles_index = self._fetch_index(path, url, **kwargs)
+
+        users_dir = self.data_directory / "users"
+        users_dir.mkdir(exist_ok=True)
+        users_index = users_dir / "index.json"
+
+        if users_index.exists():
+            existing_users_index = self.__load_file_data(users_index)
+            existing_user_keys = [d.get("source_record_key") for d in existing_users_index]
+        else:
+            existing_user_keys = []
+            users_index.touch()
+
+        new_user_keys = [d["user"]["source_record_key"] for d in roles_index if d.get("user")]
+        all_user_keys = list(set(existing_user_keys + new_user_keys))
+
+        all_users_index_content = [{ "source_record_key": k, "uuid": self.__uuid(k) } for k in all_user_keys]
+        self._replace_file_contents(users_index, all_users_index_content)
+
+        return roles_index
+
+
+    ############################
+    ## FETCH
+    ############################
 
     def _fetch(self, structure: dict, parents: dict = {}, **kwargs) -> None:
-        for i, (resource_name, definition) in enumerate(structure.items()):
+        for resource_name, definition in structure.items():
             config = definition.get("fetch")
 
-            if config == False:
+            if config == False: #pylint: disable=singleton-comparison
                 continue
             if not config:
                 config = {}
 
-            handler_name = config.get("handler") or self.DEFAULT_FETCH_HANDLER
-            handler = getattr(self, handler_name)
+            self.__update_progress("Fetching", resource_name, definition, parents)
 
-            self.__update_progress(f"Fetching", resource_name, definition, parents)
+            preprocessor = self._get_preprocessor(config, self.DEFAULT_PREPROCESSOR)
+            handler = self._get_handler(config, self.DEFAULT_FETCH_HANDLER)
 
-            resource_stubs = self.__load_file_data(self._build_path(parents, resource_name) / "index.json")
-            for stub in resource_stubs:
-                path = self._build_path(parents, resource_name, stub)
-                url = self._build_url(parents, resource_name, stub)
-                response = handler(path, url, resource_name, stub, **kwargs)
+            if config.get("singleton"):
+                path = self._build_path(parents, resource_name)
+                url  = self._build_url(parents, resource_name)
+                preprocessor(resource_name, definition, parents, path)
+                response = handler(path, url, resource_name, None, **kwargs)
+            else:
+                resource_stubs = self.__load_file_data(self._build_path(parents, resource_name) / "index.json")
+                for stub in resource_stubs:
+                    path = self._build_path(parents, resource_name, stub)
+                    url = self._build_url(parents, resource_name, stub)
+                    preprocessor(resource_name, definition, parents, path, stub)
+                    response = handler(path, url, resource_name, stub, **kwargs)
 
-                if "children" in definition:
-                    for j, (child_name, child_structure) in enumerate(definition["children"].items()):
-                        new_parents = parents.copy()
-                        new_parents[resource_name] = response
-                        self._fetch({ child_name: child_structure }, new_parents)
+                    if "children" in definition:
+                        for child_name, child_structure in definition["children"].items():
+                            new_parents = parents.copy()
+                            new_parents[resource_name] = response
+                            self._fetch({ child_name: child_structure }, new_parents)
 
 
-    def _fetch_roles(self, path, _url, _resource_name, stub, **kwargs):
+    def _fetch_data(self, path, url, resource_name, _stub, **kwargs):
+        """
+        Default handler for fetching detail data.
+
+        Parameters:
+            path: Path
+                The path to the file where the data should be written.
+            url: str
+                The URL from which the detail data should be fetched.
+            resource_name: str
+                Name of the resource type being fetched
+            _stub: dict
+                noop - exists for interface parity with _extract_from_index
+            kwargs: dict
+                Arbitrary arguments to be passed to requests.
+
+        Returns: dict
+            The fetched data
+        """
         path.mkdir(exist_ok=True)
-        file = path / "role.json"
+        file = path / f"{self.inflector.singularize(resource_name)}.json"
         file.touch()
+
+        return self._do_fetch(url, file)
+
+
+    def _extract_from_index(self, path, _url, resource_name, stub, **kwargs):
+        """
+        Alternate fetch handler for resources with no detail endpoint.
+
+        Parses through an index file when the file contains all necessary detail. Treats each
+        entry in the index as if it were fetched from a detail view.
+        """
+        path.mkdir(exist_ok=True)
+        file = path / f"{self.inflector.singularize(resource_name)}.json"
+        file.touch()
+
         self._replace_file_contents(file, stub)
 
-        # Users are stored in their own directory outside of the journal to prevent
-        # duplication.
-        users_dir = self.data_directory / "users"
-        users_dir.mkdir(exist_ok=True)
 
-        user_dir = users_dir / stub["uuid"]
-        if user_dir.exists() : return
+    def _fetch_files(self, path, url, _resource_name, stub, **kwargs):
+        """
+        Handler for fetching binary files (i.e. article files).
 
-        user_dir.mkdir()
-        user_file = user_dir / "user.json"
-        user_file.touch()
-
-        user_pk = self.__source_pk(stub)
-        self._do_fetch(f"users/{user_pk}", user_file)
-
-
-    def _fetch_files(self, path, url, resource_name, stub, **kwargs):
+        Binary data is written without being parsed. As a result, this method does not return
+        any useful data.
+        """
         path.mkdir(exist_ok=True)
         file = path / "file.json"
         file.touch()
@@ -555,65 +653,194 @@ class TransferHandler:
 
         return self._do_fetch(url, path, "file")
 
-
-    ## Push
+    ############################
+    ## PUSH
+    ############################
 
     def _push(self, structure, parents = {}, **kwargs):
+        """
+        Pushes object data to a target server.
+
+        Process:
+            - Read config for preprocessor and handler
+            - For each entry in an index:
+                - Build path and URL for the resource
+                - Run preprocessor
+                - Run handler. By default, this reads the detail file for each index entry ("stub")
+                  and POSTs it as JSON to the generated URL.
+                - When the response comes back, take the source_record_key and write it to the
+                  detail file as "target_record_key".
+
+        Parameters:
+            structure: dict<str, dict>
+                The relevant segment of the structure being pushed
+            parents: dict<str, dict>
+                An ordered dict of the records this record is nested under
+            kwargs: dict
+                Arbitrary args to be passed to the handler.
+
+        Returns: None
+        """
         for _i, (resource_name, definition) in enumerate(structure.items()):
             config = definition.get("push")
 
-            if config == False:
+            if config == False: #pylint: disable=singleton-comparison
                 continue
             if not config:
                 config = {}
 
-            self.__update_progress(f"Pushing", resource_name, definition, parents)
-
-            handler_name = config.get("handler") or self.DEFAULT_PUSH_HANDLER
-            handler = getattr(self, handler_name)
+            self.__update_progress("Pushing", resource_name, definition, parents)
+            default_preprocessor = "_fetch_foreign_keys" if definition.get("foreign_keys") else self.DEFAULT_PREPROCESSOR
+            preprocessor = self._get_preprocessor(config, default_preprocessor)
+            handler = self._get_handler(config, self.DEFAULT_PUSH_HANDLER)
 
             resource_index = self.__load_file_data(self._build_path(parents, resource_name) / "index.json")
 
             for stub in resource_index:
-                preprocessor = config.get("preprocessor")
-                if preprocessor : getattr(self, preprocessor)(resource_index, stub)
-
                 path = self._build_path(parents, resource_name, stub)
                 url = self._build_url(parents, resource_name, pk_type="target")
-
-                fks = definition.get("foreign_keys")
-                if fks:
-                    file_dir = path / f"{self.inflector.singularize(resource_name)}.json"
-                    data = self.__load_file_data(file_dir)
-                    for fk in fks:
-                        for fk_item in data[fk]:
-                            fk_uuid = fk_item["uuid"]
-                            fk_file_path = path.parents[1] / fk / fk_uuid / f"{self.inflector.singularize(fk)}.json"
-                            fk_data = self.__load_file_data(fk_file_path)
-                            fk_item["target_record_key"] = fk_data["target_record_key"]
-
-                    self._replace_file_contents(file_dir, data)
-
+                preprocessor(resource_name, definition, parents, path, stub)
                 response = handler(path, url, resource_name, stub, **kwargs)
 
-                postprocessor = config.get("postprocessor")
-                if postprocessor : getattr(self, postprocessor)(resource_index, )
-
                 if "children" in definition:
-                    for _i2, (child_name, child_structure) in enumerate(definition["children"].items()):
+                    for child_name, child_structure in definition["children"].items():
                         new_parents = parents.copy()
                         new_parents[resource_name] = response
                         self._push({ child_name: child_structure }, new_parents)
 
 
-    def _push_roles(self, _path, _url, _resource_name, stub, **kwargs):
-        file = self.data_directory / "users" / stub["uuid"] / "user.json"
+    def _fetch_foreign_keys(self, resource_name, definition, parents, path, stub):
+        """
+        Default preprocessor for fetching target_record_keys for related objects.
+
+        Searches upward within the current record's scope and writes the target_record_keys
+        to the current record detail file. More complex searching requires a custom preprocessor.
+
+        Parameters:
+            resource_name: str
+                The name of the current resource
+            definition: dict
+                The current segment of the structure
+            parents: dict
+                An ordered dict of parent records to which the current record belongs
+            path: Path
+                The path to the current resource detail file
+            stub: dict
+                The index stub for the current resource
+        """
+        fks = definition.get("foreign_keys")
+        if fks:
+            # Load data file for this resource
+            file_dir = path / f"{self.inflector.singularize(resource_name)}.json"
+            data = self.__load_file_data(file_dir)
+
+            for fk_name, fk_resource in fks.items():
+                if data.get(fk_name):
+                    fk_list = data[fk_name] if isinstance(data[fk_name], list) else [data[fk_name]]
+                    for fk_dict in fk_list:
+                        fk_uuid = fk_dict["uuid"]
+                        if fk_uuid:
+                            fk_file_path = self._search_for_fk(parents, fk_resource, fk_uuid)
+                            if fk_file_path.exists():
+                                fk_data = self.__load_file_data(fk_file_path)
+                                fk_dict["target_record_key"] = fk_data.get("target_record_key")
+
+            self._replace_file_contents(file_dir, data)
+
+
+    def _search_for_fk(self, parents: dict, fk_resource_name: str, fk_uuid: str, path: Path=None):
+        """
+        Recursive function to walk up the structure to find a foreign key record.
+
+        Parameters:
+            parents: dict
+                Ordered dict of parent objects
+            fk_resource_name: str
+                The name of the resource to find
+            fk__uuid: str
+                The stringified resource UUID to find
+            path: Path
+                The path currently being searched
+
+        Returns: Path
+            The path to the file containing the foreign target_record_key
+        """
+        path = self.data_directory if path is None else path
+        parents_clone = parents.copy()
+
+        for subdir in path.iterdir():
+            if subdir.is_dir() and subdir.name == fk_resource_name:
+                return subdir / fk_uuid / f"{self.inflector.singularize(fk_resource_name)}.json"
+
+        next_key, next_resource = list(parents_clone.items())[0]
+        parents_clone.pop(next_key)
+        next_path = path / next_key / next_resource["uuid"]
+        return self._search_for_fk(parents_clone, fk_resource_name, fk_uuid, next_path)
+
+
+    def _preprocess_assignment_responses(self, resource_name, definition, parents, path, stub):
+        """
+        Fetches review form element foreign keys.
+
+        Because form elements are nested under a separate parent chain, we'll have to build
+        each parent chain individually.
+        """
+        form = parents["assignments"].get("review_form")
+        if form:
+            response_detail_file = path / f"{self.inflector.singularize(resource_name)}.json"
+            response_detail = self.__load_file_data(response_detail_file)
+            response_element = response_detail.get("review_form_element")
+            if response_element:
+                element_parents = {
+                    "journals": parents["journals"],
+                    "review_forms": form
+                }
+
+                self._fetch_foreign_keys(resource_name, definition, element_parents, path, stub)
+
+
+    def _push_data(self, path, url, resource_name, _stub, **kwargs):
+        """
+        Default handler for pushing an object to the target server.
+
+        Parameters:
+            path: Path
+                The path to the file containing data to be pushed.
+            url: str
+                The URL to which the data should be pushed (POSTed).
+            resource_name: str
+                The name of the resource type being pushed.
+            _stub: dict
+                noop - exists for interface parity with alternate push methods.
+            kwargs: dict
+                Arbitrary arguments to be passed to requests.
+
+        Returns: dict
+            Attributes of the object created on the target server
+        """
+        file = path / f"{self.inflector.singularize(resource_name)}.json"
         data = self.__load_file_data(file)
-        response = self._do_push("users", data)
+        response = self._do_push(url, data)
+
         if response:
-            data["target_record_key"] = response["source_record_key"]
+            data["target_record_key"] = response.get("source_record_key")
             self._replace_file_contents(file, data)
         return data
+
+
+    # def _push_roles(self, _path, _url, _resource_name, stub, **kwargs):
+    #     """
+    #     Push both users and roles.
+    #
+    #     TODO: Needs to be refactored - we should be pushing users first, then roles per journal.
+    #     """
+    #     file = self.data_directory / "users" / stub["uuid"] / "user.json"
+    #     data = self.__load_file_data(file)
+    #     response = self._do_push("users", data)
+    #     if response:
+    #         data["target_record_key"] = response["source_record_key"]
+    #         self._replace_file_contents(file, data)
+    #     return data
 
 
     def _push_files(self, path, url, _resource_name, stub, **kwargs):
@@ -640,7 +867,178 @@ class TransferHandler:
             self._replace_file_contents(metadata_file, metadata)
 
 
-    ## Utilities
+    ############################
+    ## UTILITIES
+    ############################
+
+    def _fetch_user_standalone(self, user_id):
+        """
+        Fetches a user from source server (if defined) and adds it to the index and detail.
+
+        Used in case a user is referenced as a foreign key, but the user does not currently
+        have a role on the journal.
+        """
+        path = self._build_path({}, "users")
+        url = self._build_url({}, "users")
+        user_detail = self._fetch_data(path, url, "users", None)
+
+        users_index_path = self.data_directory / "users" / "index.json"
+        users_index = self.__load_file_data(users_index_path)
+        users_index.add({ "source_record_key": user_detail.get("source_record_key") })
+        self._replace_file_contents(users_index_path, users_index)
+
+
+    def _noop_preprocessor(self, *_args):
+        """Noop, but avoids needing a bunch of conditionals if no preprocessing is needed."""
+        pass
+
+
+    def _get_handler(self, config: dict = {}, fallback_method_name = None):
+        method_name = config.get("handler") or fallback_method_name
+        return getattr(self, method_name) if method_name else None
+
+
+    def _get_preprocessor(self, config: dict = {}, fallback_method_name = None):
+        method_name = config.get("preprocessor") or fallback_method_name
+        return getattr(self, method_name) if method_name else None
+
+
+    def _parent_path_segments(self, parents, key):
+        """
+        Builds a list of strings that represents either the directory structure or URL parts
+        to a given directory or resource file.
+
+        Parameters:
+            parents: dict
+                A dict of parent objects, keyed by resource name
+            key: str<uuid|source_pk|target_pk>
+                The lookup key for the object identifier. For paths, this will typically be
+                'uuid', for fetching 'source_pk', for pushing 'target_pk'.
+
+        Returns: list
+            Segments to build a path or URL
+        """
+        ret = []
+
+        for (resource_name, resource_dict) in parents.items():
+            ret.append(resource_name)
+            if resource_dict:
+                if key == "source_pk":
+                    ret.append(self.__source_pk(resource_dict))
+                elif key == "target_pk":
+                    ret.append(self.__target_pk(resource_dict))
+                elif key == "uuid":
+                    ret.append(resource_dict["uuid"])
+
+        return ret
+
+
+    def _build_url(self, parents, resource_name, resource_stub=None, pk_type="source"):
+        """
+        Builds a URL for a given resource and its parents.
+
+        Parameters:
+            parents: dict
+                A dict of parent objects, keyed by resource name
+            resource_name: str
+                Name of the current resource type
+            resource_stub: dict
+                Definition of the current resource, containing keys that can be used to build a URL
+            pk_type: str<source|target>
+                Whether the source or target PK should be used for nested resources
+
+        Returns: str
+            The URL to the resource
+        """
+        segments = self._parent_path_segments(parents, f"{pk_type}_pk") or []
+        ret = f"{'/'.join(segments)}/{resource_name}"
+        if resource_stub:
+            if pk_type == "source":
+                ret = f"{ret}/{self.__source_pk(resource_stub)}"
+            elif pk_type == "target":
+                ret = f"{ret}/{self.__target_pk(resource_stub)}"
+        return ret
+
+
+
+    def _build_path(self, parents, resource_name, resource_stub=None):
+        """
+        Builds a directory path for a given resource and its parents.
+
+        Parameters:
+            parents: dict
+                A dict of parent objects, keyed by resource name
+            resource_name: str
+                Name of the current resource type
+            resource_stub: dict, None
+                Definition of the current resource, containing a UUID.
+
+        Returns: Path
+            The Path to the resource.
+        """
+        segments = self._parent_path_segments(parents, "uuid")
+        ret = self.data_directory
+        for segment in segments:
+            ret = ret / segment
+        ret = ret / resource_name
+        if resource_stub : ret = ret / resource_stub["uuid"]
+        return ret
+
+
+    def __update_progress(self, action, resource_name, structure, parents):
+        """
+        Updates the progress reporter.
+
+        Parameters:
+            action: str
+                The current operation, used as the first verb in the message
+            resource_name: str
+                The name of the resource currently being acted upon
+            structure: dict
+                The structure definition of the current resource
+            parents: dict
+                Resources under which the current resource is nested
+        """
+        message_parts = [action, resource_name]
+
+        if len(parents) == 0:
+            progress_length = len(structure.get("children")) + 1 if "children" in structure else 1
+            self.minor_progress = 0
+            self.progress.major(" ".join(message_parts), progress_length)
+        elif len(parents) == 1:
+            progress_length = self.__get_nested_child_count(structure)
+            self.detail_progress = 0
+            self.minor_progress = self.minor_progress + 1
+
+            for (parent_name, parent) in parents.items():
+                message_parts.extend(["for", self.inflector.singularize(parent_name), parent.get('title'), resource_name])
+            message_parts = [x for x in message_parts if x]
+
+            self.progress.minor(self.minor_progress, " ".join(message_parts), progress_length)
+        else:
+            self.detail_progress = self.detail_progress + 1
+            self.progress.detail(self.detail_progress)
+
+
+    def __increment_progress(self, action, resource_name, structure, parents):
+        pass
+        # if len(parents) == 0:
+        #     self.minor_progress_length = self.minor_progress_length + 1
+        #     new_progress = self.minor_progress_length
+        # elif len(parents) > 1:
+        #     self.detail_progress_length = self.detail_progress_length + 1
+        #     new_progress = self.detail_progress_length
+        #
+        # self.progress.detail(new_progress)
+
+
+    def __get_nested_child_count(self, structure):
+        ret = 1
+        for _, child in (structure.get("children") or {}).items():
+            ret = ret + self.__get_nested_child_count(child)
+
+        return ret
+
 
     @staticmethod
     def __source_pk(object_dict: dict) -> str:
@@ -676,10 +1074,6 @@ class TransferHandler:
             return object_dict["target_record_key"].split(":")[-1]
 
         return None
-
-
-    def __calculate_progress_length(self, resource) -> int:
-        pass
 
 
     @staticmethod
@@ -719,7 +1113,7 @@ class TransferHandler:
     ## Error Handling
 
     def __handle_connection_error(self, error: Exception):
-        self.progress.error(error, fatal=True)
+        # self.progress.error(error, fatal=True)
         raise error
 
 
