@@ -464,6 +464,11 @@ async def transfer(
         "--push-only",
         help="If true, only take currently-stored data and transfer to target server. Do not fetch new data."
     ),
+    index_only: Optional[bool] = typer.Option(
+        False,
+        "--index-only",
+        help="If true, only index data and do not fetch or push."
+    ),
     data_directory: Optional[str] = opt_data_directory(default = config.get("data_directory")),
     keep: Optional[bool] = opt_keep(default = config.get("keep")),
     debug: Optional[bool] = typer.Option(
@@ -491,11 +496,11 @@ async def transfer(
 
     if source_def == None and not push_only:
         errors.append(f'Source server {f"{source} is not defined" if source is not None else "is required"}')
-    if target_def == None and not fetch_only:
+    if target_def == None and not (index_only or fetch_only):
         errors.append(f'Target server {f"{target} is not defined" if target is not None else "is required"}')
 
-    if fetch_only and push_only:
-        errors.append("--fetch-only and --push-only are both set. If you'd like to do a full transfer, leave both flags unset")
+    if len([x for x in [index_only, fetch_only, push_only] if x]) > 1:
+        errors.append("Only one of --index-only, --fetch-only, and --push-only can be set. Note that --fetch-only implicitly includes index.")
 
     abort_if_errors(errors)
 
@@ -503,11 +508,13 @@ async def transfer(
     if not force : confirm(message)
 
     transfer_methods = []
-    if not push_only:
+    if index_only or fetch_only:
         database.prepare(keep)
-        transfer_methods = transfer_methods + ["fetch_indexes", "fetch_data"]
-    if not fetch_only:
-        transfer_methods = transfer_methods + ["push_data"]
+        transfer_methods = transfer_methods + ["fetch_indexes"]
+    if fetch_only:
+        transfer_methods = transfer_methods + ["fetch_data"]
+    if push_only:
+        transfer_methods = transfer_methods + ["push_only"]
 
     progress_reporter = CliProgressReporter(typer, init_message="Initializing...", verbose = verbose(), debug = debug)
     handler = TransferHandler(data_directory, source=source_def, target=target_def, progress_reporter=progress_reporter)

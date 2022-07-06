@@ -73,8 +73,7 @@ class TransferHandler: #pylint: disable=too-many-instance-attributes
                     },
                     "fetch": {
                         "handler": "_extract_from_index"
-                    },
-                    # "push": False
+                    }
                 },
                 "issues": {
                     "name_key": "title"
@@ -169,6 +168,7 @@ class TransferHandler: #pylint: disable=too-many-instance-attributes
         self.data_directory = Path(data_directory) / "current"
         self.source = source
         self.target = target
+        self.progress_length = 0
         self.progress = progress_reporter
         self.options = options
         # pylint: disable=abstract-class-instantiated
@@ -483,8 +483,7 @@ class TransferHandler: #pylint: disable=too-many-instance-attributes
 
             preprocessor(resource_name, definition, parents, path)
             response = handler(path, url, **kwargs)
-
-            self.__increment_progress("Indexing", resource_name, definition, parents)
+            self.progress_length = self.progress_length + len(response)
 
             for thing in response:
                 if "children" in definition:
@@ -828,21 +827,6 @@ class TransferHandler: #pylint: disable=too-many-instance-attributes
         return data
 
 
-    # def _push_roles(self, _path, _url, _resource_name, stub, **kwargs):
-    #     """
-    #     Push both users and roles.
-    #
-    #     TODO: Needs to be refactored - we should be pushing users first, then roles per journal.
-    #     """
-    #     file = self.data_directory / "users" / stub["uuid"] / "user.json"
-    #     data = self.__load_file_data(file)
-    #     response = self._do_push("users", data)
-    #     if response:
-    #         data["target_record_key"] = response["source_record_key"]
-    #         self._replace_file_contents(file, data)
-    #     return data
-
-
     def _push_files(self, path, url, _resource_name, stub, **kwargs):
         """
         Files need to be combined with their metadata from the index, then pushed as
@@ -1018,6 +1002,13 @@ class TransferHandler: #pylint: disable=too-many-instance-attributes
         else:
             self.detail_progress = self.detail_progress + 1
             self.progress.detail(self.detail_progress)
+
+
+    def __get_major_progress_length(self, structure, length = 1) -> int:
+        for child in (structure.get("children") or []):
+            length = length + self.__get_major_progress_length(child, length)
+
+        return length
 
 
     def __increment_progress(self, action, resource_name, structure, parents):
