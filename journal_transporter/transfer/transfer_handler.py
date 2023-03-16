@@ -80,11 +80,14 @@ class TransferHandler:
                         "handler": "_extract_from_index"
                     }
                 },
-                "issues": {
-                    "name_key": "title"
-                },
                 "sections": {
                     "name_key": "title"
+                },
+                "issues": {
+                    "name_key": "title",
+                    "foreign_keys": {
+                        "sections": "sections"
+                    }
                 },
                 "review_forms": {
                     "children": {
